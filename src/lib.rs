@@ -1,10 +1,14 @@
 //! A collection of memory allocators for the Vulkan API.
+use std::ffi::c_void;
+
 use ash::version::InstanceV1_0;
 use ash::vk;
 #[cfg(feature = "tracing")]
 use tracing::debug;
 
 pub use error::AllocatorError;
+
+type Result<T> = std::result::Result<T, AllocatorError>;
 
 mod error;
 
@@ -82,6 +86,28 @@ impl GeneralAllocator {
             block_size,
         }
     }
+
+    /// Allocates memory.
+    /// TODO
+    pub fn allocate(&self) -> Result<Allocation> {
+        Ok(Allocation {
+            allocator_index: 0,
+            pool_index: 0,
+            block_index: 0,
+            chunk_index: 0,
+            device_memory: Default::default(),
+            offset: 0,
+            size: 0,
+            mapped_ptr: None,
+            name: None,
+        })
+    }
+
+    /// Frees the allocation.
+    /// TODO
+    pub fn free(&self, allocation: Allocation) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Describes the configuration of a `GeneralAllocator`.
@@ -107,6 +133,18 @@ struct MemoryPool {
     is_mappable: bool,
 }
 
+/// Describes the configuration of a `SlotAllocator`.
+pub struct SlotAllocatorDescriptor {
+    /// The number of elements of <T> for which the memory is pre-allocated. Default: 1024
+    pub size: u64,
+}
+
+impl Default for SlotAllocatorDescriptor {
+    fn default() -> Self {
+        Self { size: 1024 }
+    }
+}
+
 /// A slot based memory allocator. Allocates a specific number of constant sized structs on
 /// the GPU memory. Slots can be filled and freed without further allocation.
 /// Needs to be created for a specific memory type.
@@ -114,8 +152,36 @@ pub struct SlotAllocator {}
 
 impl SlotAllocator {
     /// Creates a new slot based allocator.
-    pub fn new() -> Self {
+    /// TODO
+    pub fn new(
+        instance: &ash::Instance,
+        physical_device: vk::PhysicalDevice,
+        logical_device: &ash::Device,
+        descriptor: &SlotAllocatorDescriptor,
+    ) -> Self {
         Self {}
+    }
+
+    /// Allocates a new slot. Simply returns the next free slot from the pre-allocated space.
+    /// TODO
+    pub fn allocate(&self) -> Result<Allocation> {
+        Ok(Allocation {
+            allocator_index: 0,
+            pool_index: 0,
+            block_index: 0,
+            chunk_index: 0,
+            device_memory: Default::default(),
+            offset: 0,
+            size: 0,
+            mapped_ptr: None,
+            name: None,
+        })
+    }
+
+    /// Frees the allocation. Simply marks the slot as unused.
+    /// TODO
+    pub fn free(&self, allocation: Allocation) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -128,6 +194,42 @@ impl LinearAllocator {
     /// Creates a new linear allocator.
     pub fn new() -> Self {
         Self {}
+    }
+}
+
+/// A memory allocation.
+#[derive(Clone, Debug)]
+pub struct Allocation {
+    allocator_index: u32,
+    pool_index: usize,
+    block_index: usize,
+    chunk_index: u64,
+    device_memory: vk::DeviceMemory,
+    offset: u64,
+    size: u64,
+    mapped_ptr: Option<std::ptr::NonNull<c_void>>,
+    name: Option<String>,
+}
+
+impl Allocation {
+    /// The `vk::DeviceMemory` of the allocation. Managed by the allocator.
+    pub fn memory(&self) -> vk::DeviceMemory {
+        self.device_memory
+    }
+
+    /// The offset inside the `vk::DeviceMemory`.
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// The size of the allocation.
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    /// Returns a pointer into the mapped memory if it is host visible. Otherwise returns None.
+    pub fn mapped_ptr(&self) -> Option<std::ptr::NonNull<c_void>> {
+        self.mapped_ptr
     }
 }
 
