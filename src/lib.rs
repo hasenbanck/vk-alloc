@@ -1,5 +1,10 @@
 //! A collection of memory allocators for the Vulkan API.
+
 use ash::vk;
+
+pub use error::AllocatorError;
+
+mod error;
 
 /// The general purpose memory allocator. Implemented as a free list allocator.
 ///
