@@ -1,13 +1,23 @@
 use ash::vk;
 
+use vk_alloc::{GeneralAllocator, GeneralAllocatorDescriptor};
+
 pub mod fixture;
 
 #[test]
 fn vulkan_context_creation() {
-    #[cfg(feature = "tracing")]
-        tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
-
     fixture::VulkanContext::new(vk::make_version(1, 0, 0));
+}
+
+#[test]
+fn global_allocator_creation() {
+    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
+    GeneralAllocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &ctx.logical_device,
+        &GeneralAllocatorDescriptor {
+            ..Default::default()
+        },
+    );
 }

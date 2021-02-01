@@ -15,7 +15,7 @@ ash = "0.31"
 tracing = { version = "0.1", default-features = false, features = ["std", "max_level_trace", "release_max_level_info"], optional = true }
 
 [dev-dependencies]
-tracing-subscriber = { version = "0.2", default-features = false, features = ["ansi"] }
+tracing-subscriber = { version = "0.2", default-features = false, features = ["ansi", "env-filter", "fmt", "registry"] }
 
 [profile.bench]
 codegen-units = 1

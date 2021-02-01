@@ -1,10 +1,26 @@
 use std::ffi::CStr;
+use std::sync::Once;
 
 use ash::extensions::ext;
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::vk;
 #[cfg(feature = "tracing")]
 use tracing::{debug, error, info, warn};
+
+static INIT: Once = Once::new();
+
+pub fn initialize() {
+    INIT.call_once(|| {
+        #[cfg(feature = "tracing")]
+        {
+            use tracing_subscriber::filter::EnvFilter;
+
+            let filter =
+                EnvFilter::from_default_env().add_directive("lib::fixture=WARN".parse().unwrap());
+            tracing_subscriber::fmt().with_env_filter(filter).init();
+        }
+    });
+}
 
 #[cfg(feature = "tracing")]
 pub struct DebugMessenger {
@@ -28,7 +44,7 @@ impl Drop for VulkanContext {
             self.logical_device.destroy_device(None);
 
             #[cfg(feature = "tracing")]
-                self.debug_messenger
+            self.debug_messenger
                 .ext
                 .destroy_debug_utils_messenger(self.debug_messenger.callback, None);
 
@@ -39,6 +55,8 @@ impl Drop for VulkanContext {
 
 impl VulkanContext {
     pub fn new(api_version: u32) -> Self {
+        initialize();
+
         let entry = ash::Entry::new().unwrap();
 
         let engine_name = std::ffi::CString::new("ash").unwrap();
@@ -57,34 +75,32 @@ impl VulkanContext {
         let (physical_device, logical_device, queue) = Self::request_device(&instance);
 
         #[cfg(feature = "tracing")]
-            {
-                let debug_messenger = Self::create_debug_messenger(&entry, &instance);
-                Self {
-                    _entry: entry,
-                    instance,
-                    physical_device,
-                    logical_device,
-                    queue,
-                    debug_messenger,
-                }
+        {
+            let debug_messenger = Self::create_debug_messenger(&entry, &instance);
+            Self {
+                _entry: entry,
+                instance,
+                physical_device,
+                logical_device,
+                queue,
+                debug_messenger,
             }
+        }
 
         #[cfg(not(feature = "tracing"))]
-            {
-                Self {
-                    _entry: entry,
-                    instance,
-                    physical_device,
-                    logical_device,
-                    queue,
-                }
+        {
+            Self {
+                _entry: entry,
+                instance,
+                physical_device,
+                logical_device,
+                queue,
             }
+        }
     }
 
     fn create_instance_extensions(entry: &ash::Entry) -> Vec<&'static CStr> {
-        let instance_extensions = entry
-            .enumerate_instance_extension_properties()
-            .unwrap();
+        let instance_extensions = entry.enumerate_instance_extension_properties().unwrap();
 
         let mut extensions: Vec<&'static CStr> = Vec::new();
 
@@ -108,9 +124,7 @@ impl VulkanContext {
     }
 
     fn create_layers(entry: &ash::Entry) -> Vec<&'static CStr> {
-        let instance_layers = entry
-            .enumerate_instance_layer_properties()
-            .unwrap();
+        let instance_layers = entry.enumerate_instance_layer_properties().unwrap();
 
         let mut layers: Vec<&'static CStr> = Vec::new();
 
@@ -150,16 +164,11 @@ impl VulkanContext {
             .enabled_layer_names(&layer_pointers[..layers.len()])
             .enabled_extension_names(&layer_pointers[layers.len()..]);
 
-        unsafe {
-            entry.create_instance(&create_info, None).unwrap()
-        }
+        unsafe { entry.create_instance(&create_info, None).unwrap() }
     }
 
     #[cfg(feature = "tracing")]
-    fn create_debug_messenger(
-        entry: &ash::Entry,
-        instance: &ash::Instance,
-    ) -> DebugMessenger {
+    fn create_debug_messenger(entry: &ash::Entry, instance: &ash::Instance) -> DebugMessenger {
         let ext = ext::DebugUtils::new(entry, instance);
         let info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
@@ -176,34 +185,28 @@ impl VulkanContext {
         for device in physical_devices {
             let properties = unsafe { instance.get_physical_device_properties(device) };
 
-            if properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU || properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU {
+            if properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU
+                || properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU
+            {
                 chosen = Some((device, properties))
             }
         }
 
         let (physical_device, _) = chosen.unwrap();
-        let (logical_device, queue) = Self::create_logical_device(
-            instance,
-            physical_device,
-        );
+        let (logical_device, queue) = Self::create_logical_device(instance, physical_device);
 
         (physical_device, logical_device, queue)
     }
-
 
     fn create_logical_device(
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
     ) -> (ash::Device, vk::Queue) {
-        let queue_family_properties = unsafe {
-            instance
-                .get_physical_device_queue_family_properties(physical_device)
-        };
+        let queue_family_properties =
+            unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
 
-        let transfer_queue_family_id = Self::find_queue_family(
-            vk::QueueFlags::TRANSFER,
-            &queue_family_properties,
-        );
+        let transfer_queue_family_id =
+            Self::find_queue_family(vk::QueueFlags::TRANSFER, &queue_family_properties);
 
         let queue_infos = [vk::DeviceQueueCreateInfo::builder()
             .queue_family_index(transfer_queue_family_id)
@@ -229,7 +232,7 @@ impl VulkanContext {
                     {
                         queue_id = Some(id as u32);
                     }
-                },
+                }
                 _ => panic!("Unhandled vk::QueueFlags value"),
             }
         }
@@ -255,7 +258,8 @@ impl VulkanContext {
 
         unsafe {
             instance
-                .create_device(physical_device, &device_create_info, None).unwrap()
+                .create_device(physical_device, &device_create_info, None)
+                .unwrap()
         }
     }
 
@@ -270,7 +274,8 @@ impl VulkanContext {
         let device_extensions = unsafe {
             instance
                 .enumerate_device_extension_properties(physical_device)
-        }.unwrap();
+                .unwrap()
+        };
 
         extensions.retain(|&ext| {
             let found = device_extensions
