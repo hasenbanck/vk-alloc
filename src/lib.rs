@@ -208,7 +208,7 @@ impl LinearAllocator {
 /// The configuration descriptor for an allocation.
 #[derive(Debug, Clone)]
 pub struct AllocationDescriptor {
-    /// Location where the memory allocation should be stored.
+    /// Location where the memory allocation should be located.
     pub location: MemoryLocation,
     /// Vulkan memory requirements for an allocation.
     pub requirements: vk::MemoryRequirements,
@@ -219,11 +219,11 @@ pub struct AllocationDescriptor {
 /// The location of the memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryLocation {
-    /// Mainly used for uploading data to the GPU. (DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT)
+    /// Mainly used for uploading data to the GPU (DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT).
     CpuToGpu,
-    /// Used as fast access memory for the GPU. (DEVICE_LOCAL)
+    /// Used as fast access memory for the GPU (DEVICE_LOCAL).
     GpuOnly,
-    /// Mainly used for downloading data from the GPU. (HOST_VISIBLE | HOST_COHERENT | HOST_CACHED)
+    /// Mainly used for downloading data from the GPU (HOST_VISIBLE | HOST_COHERENT | HOST_CACHED).
     GpuToCpu,
 }
 

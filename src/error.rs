@@ -7,6 +7,8 @@ pub enum AllocatorError {
     OutOfMemory,
     /// Failed to map the memory.
     FailedToMap,
+    /// No free slots ara available.
+    NotSlotsAvailable,
     /// No compatible memory type was found.
     NoCompatibleMemoryTypeFound,
     /// An allocator implementation error.
@@ -21,6 +23,9 @@ impl std::fmt::Display for AllocatorError {
             }
             AllocatorError::FailedToMap => {
                 write!(f, "failed to map memory")
+            }
+            AllocatorError::NotSlotsAvailable => {
+                write!(f, "no free slots available")
             }
             AllocatorError::NoCompatibleMemoryTypeFound => {
                 write!(f, "no compatible memory type available")
