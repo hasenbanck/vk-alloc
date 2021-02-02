@@ -1,6 +1,9 @@
 use ash::vk;
 
-use vk_alloc::{GeneralAllocator, GeneralAllocatorDescriptor};
+use vk_alloc::{
+    AllocatorError, GeneralAllocator, GeneralAllocatorDescriptor, LinearAllocator,
+    LinearAllocatorDescriptor,
+};
 
 pub mod fixture;
 
@@ -20,4 +23,18 @@ fn global_allocator_creation() {
             ..Default::default()
         },
     );
+}
+
+#[test]
+fn linear_allocator_creation() -> Result<(), AllocatorError> {
+    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
+    LinearAllocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &ctx.logical_device,
+        &LinearAllocatorDescriptor {
+            ..Default::default()
+        },
+    )?;
+    Ok(())
 }

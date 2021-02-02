@@ -38,31 +38,7 @@ impl GeneralAllocator {
             &memory_properties.memory_types[..memory_properties.memory_type_count as usize];
 
         #[cfg(feature = "tracing")]
-        {
-            debug!("Memory types:");
-            for (i, memory_type) in memory_types.iter().enumerate() {
-                debug!(
-                    "Memory type[{}] on HEAP[{}] property flags: {:?}",
-                    i, memory_type.heap_index, memory_type.property_flags
-                );
-            }
-            debug!("Memory heaps:");
-            for i in 0..memory_properties.memory_heap_count as usize {
-                if memory_properties.memory_heaps[i].flags == vk::MemoryHeapFlags::DEVICE_LOCAL {
-                    debug!(
-                        "HEAP[{}] device local [y] size: {} MiB",
-                        i,
-                        memory_properties.memory_heaps[i].size / (1024 * 1024)
-                    );
-                } else {
-                    debug!(
-                        "HEAP[{}] device local [n] size: {} MiB",
-                        i,
-                        memory_properties.memory_heaps[i].size / (1024 * 1024)
-                    );
-                }
-            }
-        }
+        debug_memory_types(memory_properties, memory_types);
 
         let memory_pools = memory_types
             .iter()
@@ -123,9 +99,7 @@ impl Default for GeneralAllocatorDescriptor {
     }
 }
 
-/// Manages the memory pool of a specific memory type. Saves buffers and images in separate memory
-/// blocks, so that we don't need to follow the granularity alignment between them and have less
-/// internal fragmentation.
+/// Manages the memory pool of a specific memory type.
 struct MemoryPool {
     memory_properties: vk::MemoryPropertyFlags,
     memory_type_index: usize,
@@ -193,15 +167,75 @@ impl SlotAllocator {
     }
 }
 
+/// Describes the configuration of a `LinearAllocator`.
+pub struct LinearAllocatorDescriptor {
+    /// Location where the memory allocation should be stored. Default: CpuToGpu
+    pub location: MemoryLocation,
+    /// The size of the blocks that are allocated. Needs to be a power of 2 in bytes. Default: 64 MiB.
+    /// Calculate: x = log2(Size in bytes). 26 = log2(67108864)
+    pub block_size: u8,
+}
+
+impl Default for LinearAllocatorDescriptor {
+    fn default() -> Self {
+        Self {
+            location: MemoryLocation::CpuToGpu,
+            block_size: 26,
+        }
+    }
+}
+
 /// A linear memory allocator. Memory is allocated by simply allocating new memory at the end
 /// of the current heap. The whole memory has to be freed at once.
-/// Needs to be created for a specific memory type.
-pub struct LinearAllocator {}
+/// Needs to be created for a specific memory location.
+pub struct LinearAllocator {
+    memory_pool: MemoryPool,
+    logical_device: ash::Device,
+    block_size: usize,
+    heap_end: usize,
+}
 
 impl LinearAllocator {
     /// Creates a new linear allocator.
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(
+        instance: &ash::Instance,
+        physical_device: vk::PhysicalDevice,
+        logical_device: &ash::Device,
+        descriptor: &LinearAllocatorDescriptor,
+    ) -> Result<Self> {
+        let memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+
+        let memory_types =
+            &memory_properties.memory_types[..memory_properties.memory_type_count as usize];
+
+        #[cfg(feature = "tracing")]
+        debug_memory_types(memory_properties, memory_types);
+
+        let memory_type_index =
+            find_memory_type_index(&memory_properties, descriptor.location, 0xFFFF)?;
+
+        #[cfg(feature = "tracing")]
+        debug!("Selected Memory type[{}]", memory_type_index);
+
+        let memory_type = memory_types[memory_type_index];
+        let memory_pool = MemoryPool {
+            memory_properties: memory_type.property_flags,
+            memory_type_index,
+            heap_index: memory_type.heap_index as usize,
+            is_mappable: memory_type
+                .property_flags
+                .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
+        };
+
+        let block_size = (2usize).pow(descriptor.block_size as u32);
+
+        Ok(Self {
+            memory_pool,
+            logical_device: logical_device.clone(),
+            block_size,
+            heap_end: 0,
+        })
     }
 }
 
@@ -264,16 +298,91 @@ impl Allocation {
 }
 
 fn find_memory_type_index(
-    memory_requirements: &vk::MemoryRequirements,
     memory_properties: &vk::PhysicalDeviceMemoryProperties,
-    flags: vk::MemoryPropertyFlags,
+    location: MemoryLocation,
+    memory_type_bits: u32,
+) -> Result<usize> {
+    // Prefer fast path memory when doing transfers between host and device.
+    let memory_property_flags = match location {
+        MemoryLocation::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        MemoryLocation::CpuToGpu => {
+            vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT
+                | vk::MemoryPropertyFlags::DEVICE_LOCAL
+        }
+        MemoryLocation::GpuToCpu => {
+            vk::MemoryPropertyFlags::HOST_VISIBLE
+                | vk::MemoryPropertyFlags::HOST_COHERENT
+                | vk::MemoryPropertyFlags::HOST_CACHED
+        }
+    };
+
+    let mut memory_type_index_optional =
+        query_memory_type_index(memory_properties, memory_type_bits, memory_property_flags);
+
+    // Lose memory requirements if no fast path is found.
+    if memory_type_index_optional.is_none() {
+        let memory_property_flags = match location {
+            MemoryLocation::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            MemoryLocation::CpuToGpu => {
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+            }
+            MemoryLocation::GpuToCpu => {
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+            }
+        };
+
+        memory_type_index_optional =
+            query_memory_type_index(memory_properties, memory_type_bits, memory_property_flags);
+    }
+
+    match memory_type_index_optional {
+        Some(x) => Ok(x as usize),
+        None => Err(AllocatorError::NoCompatibleMemoryTypeFound),
+    }
+}
+
+fn query_memory_type_index(
+    memory_properties: &vk::PhysicalDeviceMemoryProperties,
+    memory_type_bits: u32,
+    memory_property_flags: vk::MemoryPropertyFlags,
 ) -> Option<u32> {
     memory_properties.memory_types[..memory_properties.memory_type_count as usize]
         .iter()
         .enumerate()
         .find(|(index, memory_type)| {
-            ((1 << index) & memory_requirements.memory_type_bits) != 0
-                && memory_type.property_flags.contains(flags)
+            ((1 << index) & memory_type_bits) != 0
+                && memory_type.property_flags.contains(memory_property_flags)
         })
         .map(|(index, _)| index as u32)
+}
+
+#[cfg(feature = "tracing")]
+fn debug_memory_types(
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+    memory_types: &[vk::MemoryType],
+) {
+    debug!("Memory heaps:");
+    for i in 0..memory_properties.memory_heap_count as usize {
+        if memory_properties.memory_heaps[i].flags == vk::MemoryHeapFlags::DEVICE_LOCAL {
+            debug!(
+                "HEAP[{}] device local [y] size: {} MiB",
+                i,
+                memory_properties.memory_heaps[i].size / (1024 * 1024)
+            );
+        } else {
+            debug!(
+                "HEAP[{}] device local [n] size: {} MiB",
+                i,
+                memory_properties.memory_heaps[i].size / (1024 * 1024)
+            );
+        }
+    }
+    debug!("Memory types:");
+    for (i, memory_type) in memory_types.iter().enumerate() {
+        debug!(
+            "Memory type[{}] on HEAP[{}] property flags: {:?}",
+            i, memory_type.heap_index, memory_type.property_flags
+        );
+    }
 }
