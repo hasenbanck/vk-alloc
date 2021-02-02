@@ -135,17 +135,25 @@ struct MemoryPool {
 
 /// Describes the configuration of a `SlotAllocator`.
 pub struct SlotAllocatorDescriptor {
-    /// The number of elements of <T> for which the memory is pre-allocated. Default: 1024
+    /// Location where the memory allocation should be stored. Default: GpuOnly
+    pub location: MemoryLocation,
+    /// Vulkan memory requirements used for all slots.
+    pub requirements: vk::MemoryRequirements,
+    /// The number of elements of <T> for which the memory is pre-allocated. Default: 16
     pub size: u64,
 }
 
 impl Default for SlotAllocatorDescriptor {
     fn default() -> Self {
-        Self { size: 1024 }
+        Self {
+            location: MemoryLocation::GpuOnly,
+            requirements: Default::default(),
+            size: 16,
+        }
     }
 }
 
-/// A slot based memory allocator. Allocates a specific number of constant sized structs on
+/// A slot based memory allocator. Allocates a specific number of constant sized data on
 /// the GPU memory. Slots can be filled and freed without further allocation.
 /// Needs to be created for a specific memory type.
 pub struct SlotAllocator {}
@@ -195,6 +203,28 @@ impl LinearAllocator {
     pub fn new() -> Self {
         Self {}
     }
+}
+
+/// The configuration descriptor for an allocation.
+#[derive(Debug, Clone)]
+pub struct AllocationDescriptor {
+    /// Location where the memory allocation should be stored.
+    pub location: MemoryLocation,
+    /// Vulkan memory requirements for an allocation.
+    pub requirements: vk::MemoryRequirements,
+    /// Name of the allocation, for tracking and debugging purposes.
+    pub name: Option<String>,
+}
+
+/// The location of the memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryLocation {
+    /// Mainly used for uploading data to the GPU. (DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT)
+    CpuToGpu,
+    /// Used as fast access memory for the GPU. (DEVICE_LOCAL)
+    GpuOnly,
+    /// Mainly used for downloading data from the GPU. (HOST_VISIBLE | HOST_COHERENT | HOST_CACHED)
+    GpuToCpu,
 }
 
 /// A memory allocation.
