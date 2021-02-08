@@ -14,14 +14,39 @@ type Result<T> = std::result::Result<T, AllocatorError>;
 
 mod error;
 
+#[inline]
+fn align_down(val: u64, alignment: u64) -> u64 {
+    val & !(alignment - 1u64)
+}
+
+#[inline]
+fn align_up(val: u64, alignment: u64) -> u64 {
+    align_down(val + alignment - 1u64, alignment)
+}
+
+#[inline]
+fn is_on_same_page(offset_lhs: u64, size_lhs: u64, offset_rhs: u64, page_size: u64) -> bool {
+    let end_lhs = offset_lhs + size_lhs - 1;
+    let end_page_lhs = align_down(end_lhs, page_size);
+    let start_rhs = offset_rhs;
+    let start_page_rhs = align_down(start_rhs, page_size);
+
+    end_page_lhs == start_page_rhs
+}
+
+#[inline]
+fn has_granularity_conflict(lhs_is_linear: bool, rhs_is_linear: bool) -> bool {
+    lhs_is_linear != rhs_is_linear
+}
+
 /// The general purpose memory allocator. Implemented as a free list allocator.
 ///
 /// Does save data that is too big for a memory block or marked as dedicated into a dedicated
 /// GPU memory block. Handles the selection of the right memory type for the user.
 pub struct GeneralAllocator {
     memory_types: Vec<MemoryType>,
-    linear_pools: Vec<MemoryPool>,
-    optimal_pools: Vec<MemoryPool>,
+    buffer_pools: Vec<MemoryPool>,
+    image_pools: Vec<MemoryPool>,
     logical_device: ash::Device,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     block_size: usize,
@@ -70,8 +95,8 @@ impl GeneralAllocator {
 
         Self {
             memory_types,
-            linear_pools,
-            optimal_pools,
+            buffer_pools: linear_pools,
+            image_pools: optimal_pools,
             logical_device: logical_device.clone(),
             memory_properties,
             block_size,
@@ -342,7 +367,12 @@ impl SlotAllocator {
 pub struct LinearAllocator {
     logical_device: ash::Device,
     memory_block: MemoryBlock,
+    buffer_image_granularity: u64,
     heap_end: u64,
+
+    previous_offset: u64,
+    previous_size: u64,
+    previous_is_linear: bool,
 }
 
 impl LinearAllocator {
@@ -379,17 +409,33 @@ impl LinearAllocator {
 
         let memory_block = MemoryBlock::new(logical_device, size, memory_type_index, is_mappable)?;
 
+        let physical_device_properties =
+            unsafe { instance.get_physical_device_properties(physical_device) };
+
+        let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;
+
         Ok(Self {
             logical_device: logical_device.clone(),
             memory_block,
             heap_end: 0,
+            previous_offset: 0,
+            previous_size: 0,
+            buffer_image_granularity,
+            previous_is_linear: false,
         })
     }
 
-    /// Allocates `size` bytes on the linear allocator. Memory location and requirements have to be
+    /// Allocates some memory on the linear allocator. Memory location and requirements have to be
     /// defined at the creation of the linear allocator. If the allocator has not enough space left
     /// for the allocation, it will fail with an "OutOfMemory" error.
-    pub fn allocate(&mut self, size: u64) -> Result<LinearAllocation> {
+    pub fn allocate(
+        &mut self,
+        descriptor: &LinearAllocationDescriptor,
+    ) -> Result<LinearAllocation> {
+        let size = descriptor.requirements.size;
+        let alignment = descriptor.requirements.alignment;
+        let is_linear = descriptor.allocation_type.is_linear();
+
         let free = self.memory_block.size - self.heap_end;
         if size < free {
             #[cfg(feature = "tracing")]
@@ -400,11 +446,30 @@ impl LinearAllocator {
             return Err(AllocatorError::OutOfMemory);
         }
 
-        #[cfg(feature = "tracing")]
-        trace!("Allocating {} bytes on the linear allocator", size);
+        // TODO test if the requirements.memory_bits are okay for the allocator!
 
-        let offset = self.heap_end;
-        self.heap_end += size;
+        // TODO verify this!
+        let mut offset = align_up(self.heap_end, alignment);
+        if is_on_same_page(
+            self.previous_offset,
+            self.previous_size,
+            offset,
+            self.buffer_image_granularity,
+        ) && has_granularity_conflict(self.previous_is_linear, is_linear)
+        {
+            offset = align_up(offset, self.buffer_image_granularity);
+        }
+
+        let padding = offset - self.heap_end;
+        let aligned_size = padding + size;
+        self.heap_end += aligned_size;
+
+        #[cfg(feature = "tracing")]
+        trace!(
+            "Allocating {} bytes on the linear allocator. Padded to {} bytes",
+            size,
+            aligned_size
+        );
 
         Ok(LinearAllocation {
             device_memory: Default::default(),
@@ -507,13 +572,34 @@ pub trait AllocatorInfo {
     fn free_blocks(&self) -> u64;
 }
 
-/// The configuration descriptor for an allocation.
-#[derive(Debug, Clone)]
+/// The configuration descriptor for a linear allocation.
 pub struct LinearAllocationDescriptor {
-    /// Location where the memory allocation should be located.
-    pub location: MemoryLocation,
     /// Vulkan memory requirements for an allocation.
     pub requirements: vk::MemoryRequirements,
+    /// Type of the allocation.
+    pub allocation_type: AllocationType,
+}
+
+/// Type of the allocation.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum AllocationType {
+    /// A allocation for a buffer.
+    Buffer,
+    /// An allocation for a regular image.
+    OptimalImage,
+    /// An allocation for a linear image.
+    LinearImage,
+}
+
+impl AllocationType {
+    /// Returns true if this is a "linear" type (buffers and linear images).
+    pub(crate) fn is_linear(&self) -> bool {
+        match self {
+            AllocationType::Buffer => true,
+            AllocationType::OptimalImage => false,
+            AllocationType::LinearImage => true,
+        }
+    }
 }
 
 /// The location of the memory.
