@@ -38,3 +38,5 @@ fn linear_allocator_creation() -> Result<(), AllocatorError> {
     )?;
     Ok(())
 }
+
+// TODO test the linear allocator
