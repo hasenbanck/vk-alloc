@@ -15,13 +15,13 @@ type Result<T> = std::result::Result<T, AllocatorError>;
 mod error;
 
 #[inline]
-fn align_down(val: u64, alignment: u64) -> u64 {
-    val & !(alignment - 1u64)
+fn align_down(offset: u64, alignment: u64) -> u64 {
+    offset & !(alignment - 1u64)
 }
 
 #[inline]
-fn align_up(val: u64, alignment: u64) -> u64 {
-    align_down(val + alignment - 1u64, alignment)
+fn align_up(offset: u64, alignment: u64) -> u64 {
+    (offset + (alignment - 1u64)) & !(alignment - 1u64)
 }
 
 #[inline]
