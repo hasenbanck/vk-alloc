@@ -34,6 +34,7 @@ pub struct VulkanContext {
     pub physical_device: vk::PhysicalDevice,
     pub logical_device: ash::Device,
     pub queue: vk::Queue,
+    pub buffer_image_granularity: u64,
     #[cfg(feature = "tracing")]
     debug_messenger: DebugMessenger,
 }
@@ -74,6 +75,11 @@ impl VulkanContext {
         let instance = Self::create_instance(&entry, &app_info, &extensions, &instance_layers);
         let (physical_device, logical_device, queue) = Self::request_device(&instance);
 
+        let physical_device_properties =
+            unsafe { instance.get_physical_device_properties(physical_device) };
+
+        let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;
+
         #[cfg(feature = "tracing")]
         {
             let debug_messenger = Self::create_debug_messenger(&entry, &instance);
@@ -83,6 +89,7 @@ impl VulkanContext {
                 physical_device,
                 logical_device,
                 queue,
+                buffer_image_granularity,
                 debug_messenger,
             }
         }
@@ -95,6 +102,7 @@ impl VulkanContext {
                 physical_device,
                 logical_device,
                 queue,
+                buffer_image_granularity,
             }
         }
     }

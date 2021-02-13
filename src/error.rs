@@ -1,7 +1,7 @@
 //! Crate errors.
 
 /// Errors that the allocators can throw.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum AllocatorError {
     /// General out of memory error.
     OutOfMemory,
