@@ -26,6 +26,10 @@ fn align_up(offset: u64, alignment: u64) -> u64 {
 
 #[inline]
 fn is_on_same_page(offset_lhs: u64, size_lhs: u64, offset_rhs: u64, page_size: u64) -> bool {
+    if offset_lhs == 0 && size_lhs == 0 {
+        return false;
+    }
+
     let end_lhs = offset_lhs + size_lhs - 1;
     let end_page_lhs = align_down(end_lhs, page_size);
     let start_rhs = offset_rhs;
@@ -54,6 +58,7 @@ pub struct GeneralAllocator {
 
 impl GeneralAllocator {
     /// Creates a new general purpose allocator.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn new(
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
@@ -105,6 +110,7 @@ impl GeneralAllocator {
 
     /// Allocates memory.
     /// TODO
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn allocate(&self) -> Result<GeneralAllocation> {
         Ok(GeneralAllocation {
             allocator_index: 0,
@@ -121,6 +127,7 @@ impl GeneralAllocator {
 
     /// Frees the allocation.
     /// TODO
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn free(&self, allocation: GeneralAllocation) -> Result<()> {
         Ok(())
     }
@@ -253,6 +260,7 @@ struct MemoryBlock {
 }
 
 impl MemoryBlock {
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn new(
         device: &ash::Device,
         size: u64,
@@ -260,13 +268,18 @@ impl MemoryBlock {
         is_mappable: bool,
     ) -> Result<Self> {
         let device_memory = {
+            let alloc_info = vk::MemoryAllocateInfo::builder()
+                .allocation_size(size)
+                .memory_type_index(memory_type_index as u32);
+
             let allocation_flags = vk::MemoryAllocateFlags::DEVICE_ADDRESS;
             let mut flags_info = vk::MemoryAllocateFlagsInfo::builder().flags(allocation_flags);
 
-            let alloc_info = vk::MemoryAllocateInfo::builder()
-                .allocation_size(size)
-                .memory_type_index(memory_type_index as u32)
-                .push_next(&mut flags_info);
+            let alloc_info = if cfg!(features = "vk-buffer-device-address") {
+                alloc_info.push_next(&mut flags_info)
+            } else {
+                alloc_info
+            };
 
             unsafe { device.allocate_memory(&alloc_info, None) }
                 .map_err(|_| AllocatorError::OutOfMemory)?
@@ -296,6 +309,7 @@ impl MemoryBlock {
         })
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn destroy(&mut self, device: &ash::Device) {
         if !self.mapped_ptr.is_null() {
             unsafe { device.unmap_memory(self.device_memory) };
@@ -339,6 +353,7 @@ pub struct SlotAllocator {}
 impl SlotAllocator {
     /// Creates a new slot based allocator.
     /// TODO
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn new(
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
@@ -350,12 +365,13 @@ impl SlotAllocator {
 
     /// Allocates a new slot. Simply returns the next free slot from the pre-allocated space.
     /// TODO
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn allocate(&self) -> Result<()> {
         Ok(())
     }
 
     /// Frees the allocation. Simply marks the slot as unused.
-    /// TODO
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn free(&self, allocation: u64) -> Result<()> {
         Ok(())
     }
@@ -377,6 +393,7 @@ pub struct LinearAllocator {
 
 impl LinearAllocator {
     /// Creates a new linear allocator.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn new(
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
@@ -428,6 +445,7 @@ impl LinearAllocator {
     /// Allocates some memory on the linear allocator. Memory location and requirements have to be
     /// defined at the creation of the linear allocator. If the allocator has not enough space left
     /// for the allocation, it will fail with an "OutOfMemory" error.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn allocate(
         &mut self,
         descriptor: &LinearAllocationDescriptor,
@@ -437,7 +455,7 @@ impl LinearAllocator {
         let is_linear = descriptor.allocation_type.is_linear();
 
         let free = self.memory_block.size - self.heap_end;
-        if size < free {
+        if size > free {
             #[cfg(feature = "tracing")]
             warn!(
                 "Can't allocate {} bytes on the linear allocator, because only {} bytes are free",
@@ -450,12 +468,13 @@ impl LinearAllocator {
 
         // TODO verify this!
         let mut offset = align_up(self.heap_end, alignment);
-        if is_on_same_page(
-            self.previous_offset,
-            self.previous_size,
-            offset,
-            self.buffer_image_granularity,
-        ) && has_granularity_conflict(self.previous_is_linear, is_linear)
+        if has_granularity_conflict(self.previous_is_linear, is_linear)
+            && is_on_same_page(
+                self.previous_offset,
+                self.previous_size,
+                offset,
+                self.buffer_image_granularity,
+            )
         {
             offset = align_up(offset, self.buffer_image_granularity);
         }
@@ -482,8 +501,12 @@ impl LinearAllocator {
     /// Resets the end of the heap back to the start of the memory allocation.
     /// All previously `Allocation` will get invalid after this. Accessing them afterward is
     /// undefined behavior.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn free(&mut self) {
-        self.heap_end = 0
+        self.heap_end = 0;
+        self.previous_is_linear = false;
+        self.previous_offset = 0;
+        self.previous_size = 0;
     }
 }
 
