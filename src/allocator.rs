@@ -27,6 +27,7 @@ pub struct Allocator {
     device: ash::Device,
     buffer_pools: Vec<MemoryPool>,
     image_pools: Vec<MemoryPool>,
+    memory_types_size: u32,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
 }
 
@@ -84,6 +85,7 @@ impl Allocator {
             device: logical_device.clone(),
             buffer_pools,
             image_pools,
+            memory_types_size,
             memory_properties,
         }
     }
@@ -213,11 +215,22 @@ impl Allocator {
 
     /// Frees the allocation.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn free(&self, allocation: Allocation) -> Result<()> {
+    pub fn free(&mut self, allocation: Allocation) -> Result<()> {
+        let memory_pool = if allocation.pool_index > self.memory_types_size {
+            &mut self.image_pools[(allocation.pool_index - self.memory_types_size) as usize]
+        } else {
+            &mut self.buffer_pools[allocation.pool_index as usize]
+        };
+
         if let Some(chunk_key) = allocation.chunk_key {
             // TODO delete the chunk on the pool
+            // TODO merge with free chunks on the left and right
         } else {
-            // TODO delete the dedicated block on the pool
+            let mut block = memory_pool
+                .blocks
+                .remove(allocation.block_key)
+                .ok_or(AllocatorError::UnknownMemoryBlock)?;
+            block.destroy(&self.device);
         }
 
         Ok(())
@@ -308,7 +321,7 @@ pub struct AllocationDescriptor {
 #[derive(Clone, Debug)]
 pub struct Allocation {
     pool_index: u32,
-    block_key: Option<BlockKey>,
+    block_key: BlockKey,
     chunk_key: Option<ChunkKey>,
     device_memory: vk::DeviceMemory,
     offset: u64,
@@ -396,7 +409,7 @@ impl MemoryPool {
 
         Ok(Allocation {
             pool_index: self.pool_index,
-            block_key: Some(self.blocks.insert(block)),
+            block_key: self.blocks.insert(block),
             chunk_key: None,
             device_memory,
             offset: 0,
@@ -497,7 +510,7 @@ impl MemoryPool {
 
                 return Ok(Allocation {
                     pool_index: self.pool_index,
-                    block_key: Some(lhs.block_key),
+                    block_key: lhs.block_key,
                     chunk_key: Some(candidate.key),
                     device_memory: block.device_memory,
                     offset: lhs.offset,
