@@ -7,7 +7,9 @@ use ash::vk;
 use tracing::debug;
 
 pub use error::AllocatorError;
-pub use general_allocator::{GeneralAllocation, GeneralAllocator, GeneralAllocatorDescriptor};
+pub use general_allocator::{
+    GeneralAllocation, GeneralAllocationDescriptor, GeneralAllocator, GeneralAllocatorDescriptor,
+};
 pub use linear_allocator::{
     LinearAllocation, LinearAllocationDescriptor, LinearAllocator, LinearAllocatorDescriptor,
 };
@@ -99,9 +101,7 @@ pub trait AllocatorInfo {
     /// Reserved memory in bytes.
     fn size(&self) -> u64;
     /// Reserved memory blocks.
-    fn reserved_blocks(&self) -> u64;
-    /// Reserved but unused memory blocks.
-    fn free_blocks(&self) -> u64;
+    fn reserved_blocks(&self) -> usize;
 }
 
 /// Type of the allocation.

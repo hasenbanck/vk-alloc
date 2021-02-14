@@ -2,19 +2,29 @@
 
 use std::ffi::c_void;
 
-use ash::version::InstanceV1_0;
+use ash::version::{DeviceV1_1, InstanceV1_0};
 use ash::vk;
 use slotmap::{new_key_type, SlotMap};
+#[cfg(feature = "tracing")]
+use tracing::debug;
 
-use crate::{align_up, Result};
-use crate::{debug_memory_types, Allocation, MemoryBlock};
+#[cfg(feature = "tracing")]
+use crate::debug_memory_types;
+use crate::{
+    align_up, find_memory_type_index, AllocationType, AllocatorError, AllocatorInfo,
+    MemoryLocation, Result,
+};
+use crate::{Allocation, MemoryBlock};
+
+// For a minimal bucket size of 256b.
+const MINIMAL_BUCKET_OFFSET: usize = 56;
 
 /// The general purpose memory allocator. Implemented as a free list allocator.
 ///
 /// Does save data that is too big for a memory block or marked as dedicated into a dedicated
 /// GPU memory block. Handles the selection of the right memory type for the user.
 pub struct GeneralAllocator {
-    memory_types: Vec<MemoryType>,
+    device: ash::Device,
     buffer_pools: Vec<MemoryPool>,
     image_pools: Vec<MemoryPool>,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
@@ -38,29 +48,19 @@ impl GeneralAllocator {
         #[cfg(feature = "tracing")]
         debug_memory_types(memory_properties, memory_types);
 
-        let memory_types: Vec<MemoryType> = memory_types
-            .iter()
-            .enumerate()
-            .map(|(i, memory_type)| MemoryType {
-                memory_properties: memory_type.property_flags,
-                memory_type_index: i,
-                heap_index: memory_type.heap_index as usize,
-                is_mappable: memory_type
-                    .property_flags
-                    .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
-            })
-            .collect();
         let memory_types_size = memory_types.len() as u32;
 
         let buffer_pools = memory_types
             .iter()
             .enumerate()
-            .map(|(i, x)| {
+            .map(|(i, memory_type)| {
                 MemoryPool::new(
                     i as u32,
                     (2u64).pow(descriptor.block_size as u32),
-                    x.memory_type_index,
-                    x.is_mappable,
+                    i,
+                    memory_type
+                        .property_flags
+                        .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
                 )
             })
             .collect();
@@ -68,30 +68,99 @@ impl GeneralAllocator {
         let image_pools = memory_types
             .iter()
             .enumerate()
-            .map(|(i, x)| {
+            .map(|(i, memory_type)| {
                 MemoryPool::new(
                     memory_types_size + i as u32,
                     (2u64).pow(descriptor.block_size as u32),
-                    x.memory_type_index,
-                    x.is_mappable,
+                    i,
+                    memory_type
+                        .property_flags
+                        .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
                 )
             })
             .collect();
 
         Self {
-            memory_types,
+            device: logical_device.clone(),
             buffer_pools,
             image_pools,
             memory_properties,
         }
     }
 
-    // Bit mask containing one bit set for every memory type acceptable for this allocation.
-    // pub memory_type_bits: u32,
-
-    /// Allocates memory.
-    /// TODO
+    // TODO move me behind a feature
+    /// Allocates memory for a buffer.
     ///
+    /// Required the following extensions:
+    ///  - VK_KHR_get_memory_requirements2
+    ///  - VK_KHR_dedicated_allocation
+    pub fn allocate_memory_for_buffer(
+        &mut self,
+        buffer: vk::Buffer,
+        location: MemoryLocation,
+    ) -> Result<GeneralAllocation> {
+        let info = vk::BufferMemoryRequirementsInfo2::builder().buffer(buffer);
+        let mut dedicated_requirements = vk::MemoryDedicatedRequirements::builder();
+        let mut requirements =
+            vk::MemoryRequirements2::builder().push_next(&mut dedicated_requirements);
+
+        unsafe {
+            self.device
+                .get_buffer_memory_requirements2(&info, &mut requirements);
+        }
+
+        let memory_requirements = requirements.memory_requirements;
+
+        let is_dedicated = dedicated_requirements.prefers_dedicated_allocation == 1
+            || dedicated_requirements.requires_dedicated_allocation == 1;
+
+        let alloc_decs = GeneralAllocationDescriptor {
+            requirements: memory_requirements,
+            location,
+            allocation_type: AllocationType::Buffer,
+            is_dedicated,
+        };
+
+        self.allocate(&alloc_decs)
+    }
+
+    // TODO move me behind a feature
+    /// Allocates memory for an image.
+    ///
+    /// Required the following extensions:
+    ///  - VK_KHR_get_memory_requirements2
+    ///  - VK_KHR_dedicated_allocation
+    pub fn allocate_memory_for_image(
+        &mut self,
+        image: vk::Image,
+        location: MemoryLocation,
+    ) -> Result<GeneralAllocation> {
+        let info = vk::ImageMemoryRequirementsInfo2::builder().image(image);
+        let mut dedicated_requirements = vk::MemoryDedicatedRequirements::builder();
+        let mut requirements =
+            vk::MemoryRequirements2::builder().push_next(&mut dedicated_requirements);
+
+        unsafe {
+            self.device
+                .get_image_memory_requirements2(&info, &mut requirements);
+        }
+
+        let memory_requirements = requirements.memory_requirements;
+
+        let is_dedicated = dedicated_requirements.prefers_dedicated_allocation == 1
+            || dedicated_requirements.requires_dedicated_allocation == 1;
+
+        let alloc_decs = GeneralAllocationDescriptor {
+            requirements: memory_requirements,
+            location,
+            allocation_type: AllocationType::OptimalImage,
+            is_dedicated,
+        };
+
+        self.allocate(&alloc_decs)
+    }
+
+    /// Allocates memory on the general allocator of at least the given size.
     ///
     /// For each memory type we have two memory pools: For linear and for optimal textures.
     /// This removes the need to check for the granularity between them (1k on my 2080s) and
@@ -104,35 +173,101 @@ impl GeneralAllocator {
     /// Each pool has fixed sized blocks that need to be of power two size. Each block has at
     /// least one chunk.
     ///
-    /// Free chunks are saved in a segregated list of power2 sizes. The smallest size is 256 bytes.
-    /// 256 B, 512 B, 1 KiB, 2 B, 4 KiB, 8 KiB, 16 KiB, 32 KiB, 64 KiB, 128 KiB, 256 KiB, 512 KiB,
-    /// 1 MiB, 2 MiB, 4 MiB, 8 MiB, 16 MiB, 32 MiB, 64 MiB, 128 MiB, 512 MiB etc.
+    /// Free chunks are saved in a segregated list with buckets of power of two sizes.
     ///
     /// The biggest bucket size is the block size.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn allocate(&self, size: u64) -> Result<GeneralAllocation> {
-        // Get the bucket index if the smallest bucket is 256 B of a pow2 bucket list.
-        // bucket 0 =   0 B -  256 B
-        // bucket 1 = 257 B -  512 B
-        // bucket 2 = 513 B - 1024 B
+    pub fn allocate(
+        &mut self,
+        descriptor: &GeneralAllocationDescriptor,
+    ) -> Result<GeneralAllocation> {
+        let size = descriptor.requirements.size;
+        let alignment = descriptor.requirements.alignment;
 
-        // TODO test if allocation needs to be dedicated and select the correct memory pool.
+        #[cfg(feature = "tracing")]
+        debug!(
+            "Allocating {} bytes with an alignment of {}.",
+            size, alignment
+        );
 
-        Ok(GeneralAllocation {
-            pool_index: 0,
-            chunk_key: Default::default(),
-            device_memory: Default::default(),
-            offset: 0,
-            size: 0,
-            mapped_ptr: None,
-        })
+        if size == 0 || !alignment.is_power_of_two() {
+            return Err(AllocatorError::InvalidAlignment);
+        }
+
+        let memory_type_index = find_memory_type_index(
+            &self.memory_properties,
+            descriptor.location,
+            descriptor.requirements.memory_type_bits,
+        )?;
+
+        let pool = match descriptor.allocation_type {
+            AllocationType::Buffer | AllocationType::LinearImage => {
+                &mut self.buffer_pools[memory_type_index]
+            }
+            AllocationType::OptimalImage => &mut self.image_pools[memory_type_index],
+        };
+
+        if descriptor.is_dedicated {
+            pool.allocate_dedicated(&self.device, size)
+        } else {
+            pool.allocate(&self.device, size, alignment)
+        }
     }
 
     /// Frees the allocation.
-    /// TODO
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn free(&self, allocation: GeneralAllocation) -> Result<()> {
+        if let Some(chunk_key) = allocation.chunk_key {
+            // TODO delete the chunk on the pool
+        } else {
+            // TODO delete the dedicated block on the pool
+        }
+
         Ok(())
+    }
+}
+
+impl AllocatorInfo for GeneralAllocator {
+    fn allocated(&self) -> u64 {
+        let buffer_sum: u64 = self
+            .buffer_pools
+            .iter()
+            .flat_map(|pool| &pool.chunks)
+            .map(|(_, chunk)| chunk.size)
+            .sum();
+
+        let image_sum: u64 = self
+            .image_pools
+            .iter()
+            .flat_map(|pool| &pool.chunks)
+            .map(|(_, chunk)| chunk.size)
+            .sum();
+
+        buffer_sum + image_sum
+    }
+
+    fn size(&self) -> u64 {
+        let buffer_sum: u64 = self
+            .buffer_pools
+            .iter()
+            .flat_map(|pool| &pool.blocks)
+            .map(|(_, block)| block.size)
+            .sum();
+        let image_sum: u64 = self
+            .image_pools
+            .iter()
+            .flat_map(|pool| &pool.blocks)
+            .map(|(_, block)| block.size)
+            .sum();
+
+        buffer_sum + image_sum
+    }
+
+    fn reserved_blocks(&self) -> usize {
+        let buffer_sum: usize = self.buffer_pools.iter().map(|pool| pool.blocks.len()).sum();
+        let image_sum: usize = self.image_pools.iter().map(|pool| pool.blocks.len()).sum();
+
+        buffer_sum + image_sum
     }
 }
 
@@ -150,11 +285,25 @@ impl Default for GeneralAllocatorDescriptor {
     }
 }
 
+/// The descriptor for an allocation on the general allocator.
+#[derive(Debug, Clone)]
+pub struct GeneralAllocationDescriptor {
+    /// Location where the memory allocation should be stored.
+    pub location: MemoryLocation,
+    /// Vulkan memory requirements for an allocation.
+    pub requirements: vk::MemoryRequirements,
+    /// The type of the allocation.
+    pub allocation_type: AllocationType,
+    /// If the allocation should be dedicated.
+    pub is_dedicated: bool,
+}
+
 /// An allocation of the `GeneralAllocator`.
 #[derive(Clone, Debug)]
 pub struct GeneralAllocation {
     pool_index: u32,
-    chunk_key: ChunkKey,
+    block_key: Option<BlockKey>,
+    chunk_key: Option<ChunkKey>,
     device_memory: vk::DeviceMemory,
     offset: u64,
     size: u64,
@@ -183,14 +332,6 @@ impl Allocation for GeneralAllocation {
     }
 }
 
-/// Memory of a specific memory type.
-struct MemoryType {
-    memory_properties: vk::MemoryPropertyFlags,
-    memory_type_index: usize,
-    heap_index: usize,
-    is_mappable: bool,
-}
-
 new_key_type! {
     struct BlockKey;
     struct ChunkKey;
@@ -203,6 +344,7 @@ struct BestFitCandidate {
     aligned_size: u64,
 }
 
+// TODO benchmark me
 /// A managed memory region of a specific memory type.
 /// Used to separate buffer (linear) and texture (optimal) memory regions,
 /// so that internal memory fragmentation is kept low.
@@ -212,11 +354,8 @@ struct MemoryPool {
     memory_type_index: usize,
     is_mappable: bool,
     blocks: SlotMap<BlockKey, MemoryBlock>,
-    // TODO benchmark the available slotmaps
     chunks: SlotMap<ChunkKey, MemoryChunk>,
-    // TODO benchmark the available slotmaps
     free_chunks: Vec<Vec<ChunkKey>>,
-    // TODO this compares to a linked list / slotmap? or Vec<Vec<Option<ChunkKey>>>
     max_bucket_index: usize,
 }
 
@@ -227,7 +366,7 @@ impl MemoryPool {
 
         // The smallest bucket size is 256b, which is log2(256) = 8. So the maximal bucket size is
         // "64 - log2(block_size - 1) - 8". We can't have a free chunk that is bigger than a block.
-        let num_buckets = 56usize - (block_size - 1u64).leading_zeros() as usize;
+        let num_buckets = MINIMAL_BUCKET_OFFSET - (block_size - 1u64).leading_zeros() as usize;
 
         let empty_list: Vec<ChunkKey> = Vec::with_capacity(1024);
         let free_chunks = vec![empty_list; num_buckets];
@@ -240,8 +379,25 @@ impl MemoryPool {
             blocks,
             chunks,
             free_chunks,
-            max_bucket_index: num_buckets,
+            max_bucket_index: num_buckets - 1,
         }
+    }
+
+    fn allocate_dedicated(&mut self, device: &ash::Device, size: u64) -> Result<GeneralAllocation> {
+        let block = MemoryBlock::new(device, size, self.memory_type_index, self.is_mappable)?;
+
+        let device_memory = block.device_memory;
+        let mapped_ptr = std::ptr::NonNull::new(block.mapped_ptr);
+
+        Ok(GeneralAllocation {
+            pool_index: self.pool_index,
+            block_key: Some(self.blocks.insert(block)),
+            chunk_key: None,
+            device_memory,
+            offset: 0,
+            size,
+            mapped_ptr,
+        })
     }
 
     fn allocate(
@@ -258,7 +414,8 @@ impl MemoryPool {
         loop {
             // We couldn't find an empty block, so we will allocate a new one.
             if bucket_index > self.max_bucket_index {
-                self.allocate_new_block(device)?
+                self.allocate_new_block(device)?;
+                bucket_index = self.max_bucket_index;
             }
 
             let free_list = &self.free_chunks[bucket_index];
@@ -306,6 +463,8 @@ impl MemoryPool {
                 let rhs_chunk_key = if candidate.free_size != 0 {
                     let lhs_chunk = self.chunks[candidate.key].clone();
 
+                    // TODO the alignment is off.
+
                     let rhs_offset = lhs_chunk.offset + candidate.aligned_size;
                     let rhs_size = lhs_chunk.size - candidate.aligned_size;
 
@@ -315,7 +474,7 @@ impl MemoryPool {
                         offset: rhs_offset,
                         previous: Some(candidate.key),
                         next: lhs_chunk.next,
-                        is_free: false,
+                        is_free: true,
                     });
 
                     let rhs_bucket_index = calculate_bucket_index(rhs_size);
@@ -328,7 +487,7 @@ impl MemoryPool {
 
                 let chunk = &mut self.chunks[candidate.key];
                 chunk.is_free = false;
-                chunk.size = candidate.aligned_size;
+                chunk.size = size;
 
                 if let Some(new_chunk_key) = rhs_chunk_key {
                     chunk.next = Some(new_chunk_key);
@@ -338,7 +497,8 @@ impl MemoryPool {
 
                 return Ok(GeneralAllocation {
                     pool_index: self.pool_index,
-                    chunk_key: candidate.key,
+                    block_key: Some(chunk.block_key),
+                    chunk_key: Some(candidate.key),
                     device_memory: block.device_memory,
                     offset: chunk.offset,
                     size: chunk.size,
@@ -389,11 +549,10 @@ struct MemoryChunk {
     is_free: bool,
 }
 
-#[inline]
 fn calculate_bucket_index(size: u64) -> usize {
     if size <= 256 {
         0
     } else {
-        56usize - (size - 1u64).leading_zeros() as usize
+        MINIMAL_BUCKET_OFFSET - (size - 1u64).leading_zeros() as usize - 1
     }
 }

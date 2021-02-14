@@ -11,6 +11,8 @@ pub enum AllocatorError {
     NotSlotsAvailable,
     /// No compatible memory type was found.
     NoCompatibleMemoryTypeFound,
+    /// Alignment is not a power of 2.
+    InvalidAlignment,
     /// An allocator implementation error.
     Internal(String),
 }
@@ -29,6 +31,9 @@ impl std::fmt::Display for AllocatorError {
             }
             AllocatorError::NoCompatibleMemoryTypeFound => {
                 write!(f, "no compatible memory type available")
+            }
+            AllocatorError::InvalidAlignment => {
+                write!(f, "alignment is not a power of 2")
             }
             AllocatorError::Internal(message) => {
                 write!(f, "{}", message)

@@ -7,10 +7,11 @@ use ash::vk;
 #[cfg(feature = "tracing")]
 use tracing::{debug, trace, warn};
 
+#[cfg(feature = "tracing")]
+use crate::debug_memory_types;
 use crate::{
-    align_up, debug_memory_types, find_memory_type_index, has_granularity_conflict,
-    is_on_same_page, Allocation, AllocationType, AllocatorError, AllocatorInfo, MemoryBlock,
-    MemoryLocation, Result,
+    align_up, find_memory_type_index, has_granularity_conflict, is_on_same_page, Allocation,
+    AllocationType, AllocatorError, AllocatorInfo, MemoryBlock, MemoryLocation, Result,
 };
 
 /// A linear memory allocator. Memory is allocated by simply allocating new memory at the end
@@ -159,12 +160,8 @@ impl AllocatorInfo for LinearAllocator {
         self.memory_block.size
     }
 
-    fn reserved_blocks(&self) -> u64 {
+    fn reserved_blocks(&self) -> usize {
         1
-    }
-
-    fn free_blocks(&self) -> u64 {
-        0
     }
 }
 

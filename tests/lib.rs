@@ -1,9 +1,9 @@
 use ash::vk;
 
 use vk_alloc::{
-    Allocation, AllocationType, AllocatorError, AllocatorInfo, GeneralAllocator,
-    GeneralAllocatorDescriptor, LinearAllocationDescriptor, LinearAllocator,
-    LinearAllocatorDescriptor, MemoryLocation,
+    Allocation, AllocationType, AllocatorError, AllocatorInfo, GeneralAllocation,
+    GeneralAllocationDescriptor, GeneralAllocator, GeneralAllocatorDescriptor,
+    LinearAllocationDescriptor, LinearAllocator, LinearAllocatorDescriptor, MemoryLocation,
 };
 
 pub mod fixture;
@@ -167,6 +167,83 @@ fn linear_allocator_allocation_oom() -> Result<(), AllocatorError> {
 
     assert!(allocation.is_err());
     assert_eq!(AllocatorError::OutOfMemory, allocation.err().unwrap());
+
+    Ok(())
+}
+
+#[test]
+fn general_allocator_allocation_1024() -> Result<(), AllocatorError> {
+    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
+    let mut alloc = GeneralAllocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &ctx.logical_device,
+        &GeneralAllocatorDescriptor { block_size: 20 }, // 1 MB
+    );
+
+    for i in 0..1024 {
+        let allocation = alloc.allocate(&GeneralAllocationDescriptor {
+            location: MemoryLocation::GpuOnly,
+            requirements: vk::MemoryRequirements::builder()
+                .alignment(512)
+                .size(1024)
+                .memory_type_bits(u32::MAX)
+                .build(),
+            allocation_type: AllocationType::Buffer,
+            is_dedicated: false,
+        })?;
+        assert_eq!(allocation.size(), 1024);
+        assert_eq!(allocation.offset(), i * 1024);
+    }
+
+    assert_eq!(alloc.allocated(), 1048576);
+    assert_eq!(alloc.size(), 1048576);
+
+    // TODO
+    /*
+    alloc.free();
+    assert_eq!(alloc.allocated(), 0);
+    assert_eq!(alloc.size(), 1048576);
+    */
+
+    Ok(())
+}
+
+#[test]
+fn general_allocator_allocation_256() -> Result<(), AllocatorError> {
+    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
+    let mut alloc = GeneralAllocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &ctx.logical_device,
+        &GeneralAllocatorDescriptor { block_size: 20 }, // 1 MB
+    );
+
+    for i in 0..1024 {
+        let allocation = alloc.allocate(&GeneralAllocationDescriptor {
+            location: MemoryLocation::GpuOnly,
+            requirements: vk::MemoryRequirements::builder()
+                .alignment(1024)
+                .size(256)
+                .memory_type_bits(u32::MAX)
+                .build(),
+            allocation_type: AllocationType::Buffer,
+            is_dedicated: false,
+        })?;
+        assert_eq!(allocation.size(), 256);
+        assert_eq!(allocation.offset(), i * 1024);
+    }
+
+    assert_eq!(alloc.allocated(), 1048576);
+    assert_eq!(alloc.size(), 1048576);
+
+    // TODO
+    /*
+    alloc.free();
+
+    assert_eq!(alloc.allocated(), 0);
+    assert_eq!(alloc.size(), 1048576);
+    */
 
     Ok(())
 }
