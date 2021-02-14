@@ -94,15 +94,22 @@ pub trait Allocation {
     }
 }
 
-/// Trait to query a allocator for some information.
-/// TODO be more specific what these values mean and adjust the values in the linear and global allocator.
+/// Trait to query an allocator for some information.
 pub trait AllocatorInfo {
-    /// Allocated memory in bytes.
-    fn allocated(&self) -> u64;
-    /// Reserved memory in bytes.
-    fn size(&self) -> u64;
-    /// Reserved memory blocks.
-    fn reserved_blocks(&self) -> usize;
+    /// Number of allocations.
+    fn allocation_count(&self) -> usize;
+
+    /// Number of unused ranges between allocations.
+    fn unused_range_count(&self) -> usize;
+
+    /// Number of bytes used by the allocations.
+    fn used_bytes(&self) -> u64;
+
+    /// Number of bytes used by the unused ranges between allocations.
+    fn unused_bytes(&self) -> u64;
+
+    /// Number of allocated Vulkan memory blocks.
+    fn block_count(&self) -> usize;
 }
 
 /// Type of the allocation.

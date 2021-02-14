@@ -21,6 +21,10 @@ pub struct LinearAllocator {
     logical_device: ash::Device,
     memory_block: MemoryBlock,
     buffer_image_granularity: u64,
+    allocation_count: usize,
+    unused_range_count: usize,
+    used_bytes: u64,
+    unused_bytes: u64,
     heap_end: u64,
     previous_offset: u64,
     previous_size: u64,
@@ -74,7 +78,11 @@ impl LinearAllocator {
             previous_offset: 0,
             previous_size: 0,
             buffer_image_granularity,
+            allocation_count: 0,
+            unused_range_count: 0,
+            used_bytes: 0,
             previous_is_linear: false,
+            unused_bytes: 0,
         })
     }
 
@@ -113,6 +121,13 @@ impl LinearAllocator {
         let padding = offset - self.heap_end;
         let aligned_size = padding + descriptor.size;
 
+        self.allocation_count += 1;
+        if offset != self.heap_end {
+            self.unused_range_count += 1;
+        }
+        self.used_bytes += descriptor.size;
+        self.unused_bytes += padding;
+
         self.previous_is_linear = is_linear;
         self.previous_size = aligned_size;
         self.previous_offset = self.heap_end;
@@ -120,7 +135,7 @@ impl LinearAllocator {
 
         #[cfg(feature = "tracing")]
         trace!(
-            "Allocating {} bytes on the linear allocator. Padded to {} bytes",
+            "Allocating {} bytes on the linear allocator. Padded with {} bytes",
             descriptor.size,
             aligned_size
         );
@@ -138,6 +153,11 @@ impl LinearAllocator {
     /// undefined behavior.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn free(&mut self) {
+        self.allocation_count = 0;
+        self.unused_range_count = 0;
+        self.used_bytes = 0;
+        self.unused_bytes = 0;
+
         self.heap_end = 0;
         self.previous_is_linear = false;
         self.previous_offset = 0;
@@ -152,15 +172,23 @@ impl Drop for LinearAllocator {
 }
 
 impl AllocatorInfo for LinearAllocator {
-    fn allocated(&self) -> u64 {
-        self.heap_end
+    fn allocation_count(&self) -> usize {
+        self.allocation_count
     }
 
-    fn size(&self) -> u64 {
-        self.memory_block.size
+    fn unused_range_count(&self) -> usize {
+        self.unused_range_count
     }
 
-    fn reserved_blocks(&self) -> usize {
+    fn used_bytes(&self) -> u64 {
+        self.used_bytes
+    }
+
+    fn unused_bytes(&self) -> u64 {
+        self.unused_bytes
+    }
+
+    fn block_count(&self) -> usize {
         1
     }
 }

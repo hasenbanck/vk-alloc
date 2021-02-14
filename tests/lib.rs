@@ -63,13 +63,17 @@ fn linear_allocator_allocation_1024() -> Result<(), AllocatorError> {
         assert_eq!(allocation.offset(), i * 1024);
     }
 
-    assert_eq!(alloc.allocated(), 1048576);
-    assert_eq!(alloc.size(), 1048576);
+    assert_eq!(alloc.allocation_count(), 1024);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 1024 * 1024);
+    assert_eq!(alloc.unused_bytes(), 0);
 
     alloc.free();
 
-    assert_eq!(alloc.allocated(), 0);
-    assert_eq!(alloc.size(), 1048576);
+    assert_eq!(alloc.allocation_count(), 0);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 0);
+    assert_eq!(alloc.unused_bytes(), 0);
 
     Ok(())
 }
@@ -97,13 +101,17 @@ fn linear_allocator_allocation_256() -> Result<(), AllocatorError> {
         assert_eq!(allocation.offset(), i * 1024);
     }
 
-    assert_eq!(alloc.allocated(), 1047808);
-    assert_eq!(alloc.size(), 1048576);
+    assert_eq!(alloc.allocation_count(), 1024);
+    assert_eq!(alloc.unused_range_count(), 1023);
+    assert_eq!(alloc.used_bytes(), 1024 * 256);
+    assert_eq!(alloc.unused_bytes(), 1023 * 768);
 
     alloc.free();
 
-    assert_eq!(alloc.allocated(), 0);
-    assert_eq!(alloc.size(), 1048576);
+    assert_eq!(alloc.allocation_count(), 0);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 0);
+    assert_eq!(alloc.unused_bytes(), 0);
 
     Ok(())
 }
@@ -134,14 +142,20 @@ fn linear_allocator_allocation_granularity() -> Result<(), AllocatorError> {
         alignment: 256,
         allocation_type: AllocationType::OptimalImage,
     })?;
-
     assert_eq!(allocation.size(), 256);
     assert_eq!(allocation.offset(), ctx.buffer_image_granularity);
 
+    assert_eq!(alloc.allocation_count(), 2);
+    assert_eq!(alloc.unused_range_count(), 1);
+    assert_eq!(alloc.used_bytes(), 2 * 256);
+    assert_eq!(alloc.unused_bytes(), 768);
+
     alloc.free();
 
-    assert_eq!(alloc.allocated(), 0);
-    assert_eq!(alloc.size(), 1048576);
+    assert_eq!(alloc.allocation_count(), 0);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 0);
+    assert_eq!(alloc.unused_bytes(), 0);
 
     Ok(())
 }
@@ -196,14 +210,19 @@ fn general_allocator_allocation_1024() -> Result<(), AllocatorError> {
         assert_eq!(allocation.offset(), i * 1024);
     }
 
-    assert_eq!(alloc.allocated(), 1048576);
-    assert_eq!(alloc.size(), 1048576);
+    assert_eq!(alloc.allocation_count(), 1024);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 1024 * 1024);
+    assert_eq!(alloc.unused_bytes(), 0);
 
     // TODO
     /*
     alloc.free();
-    assert_eq!(alloc.allocated(), 0);
-    assert_eq!(alloc.size(), 1048576);
+
+    assert_eq!(alloc.allocation_count(), 0);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 0);
+    assert_eq!(alloc.unused_bytes(), 0);
     */
 
     Ok(())
@@ -234,15 +253,19 @@ fn general_allocator_allocation_256() -> Result<(), AllocatorError> {
         assert_eq!(allocation.offset(), i * 1024);
     }
 
-    assert_eq!(alloc.allocated(), 262144);
-    assert_eq!(alloc.size(), 1048576);
+    assert_eq!(alloc.allocation_count(), 1024);
+    assert_eq!(alloc.unused_range_count(), 1023);
+    assert_eq!(alloc.used_bytes(), 1024 * 256);
+    assert_eq!(alloc.unused_bytes(), 1023 * 768);
 
     // TODO
     /*
     alloc.free();
 
-    assert_eq!(alloc.allocated(), 0);
-    assert_eq!(alloc.size(), 1048576);
+    assert_eq!(alloc.allocation_count(), 0);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 0);
+    assert_eq!(alloc.unused_bytes(), 0);
     */
 
     Ok(())

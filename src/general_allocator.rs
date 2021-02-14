@@ -228,44 +228,51 @@ impl GeneralAllocator {
 }
 
 impl AllocatorInfo for GeneralAllocator {
-    fn allocated(&self) -> u64 {
-        let buffer_sum: u64 = self
+    fn allocation_count(&self) -> usize {
+        let buffer_count: usize = self
             .buffer_pools
             .iter()
-            .flat_map(|pool| &pool.chunks)
+            .flat_map(|buffer| &buffer.chunks)
+            .filter(|(_, chunk)| !chunk.is_free)
+            .count();
+        let image_count: usize = self
+            .image_pools
+            .iter()
+            .flat_map(|buffer| &buffer.chunks)
+            .filter(|(_, chunk)| !chunk.is_free)
+            .count();
+
+        buffer_count + image_count
+    }
+
+    fn unused_range_count(&self) -> usize {
+        count_unused_ranges(&self.buffer_pools) + count_unused_ranges(&self.image_pools)
+    }
+
+    fn used_bytes(&self) -> u64 {
+        let buffer_bytes: u64 = self
+            .buffer_pools
+            .iter()
+            .flat_map(|buffer| &buffer.chunks)
+            .filter(|(_, chunk)| !chunk.is_free)
+            .map(|(_, chunk)| chunk.size)
+            .sum();
+        let image_bytes: u64 = self
+            .image_pools
+            .iter()
+            .flat_map(|buffer| &buffer.chunks)
             .filter(|(_, chunk)| !chunk.is_free)
             .map(|(_, chunk)| chunk.size)
             .sum();
 
-        let image_sum: u64 = self
-            .image_pools
-            .iter()
-            .flat_map(|pool| &pool.chunks)
-            .filter(|(_, chunk)| !chunk.is_free)
-            .map(|(_, chunk)| chunk.size)
-            .sum();
-
-        buffer_sum + image_sum
+        buffer_bytes + image_bytes
     }
 
-    fn size(&self) -> u64 {
-        let buffer_sum: u64 = self
-            .buffer_pools
-            .iter()
-            .flat_map(|pool| &pool.blocks)
-            .map(|(_, block)| block.size)
-            .sum();
-        let image_sum: u64 = self
-            .image_pools
-            .iter()
-            .flat_map(|pool| &pool.blocks)
-            .map(|(_, block)| block.size)
-            .sum();
-
-        buffer_sum + image_sum
+    fn unused_bytes(&self) -> u64 {
+        count_unused_bytes(&self.buffer_pools) + count_unused_bytes(&self.image_pools)
     }
 
-    fn reserved_blocks(&self) -> usize {
+    fn block_count(&self) -> usize {
         let buffer_sum: usize = self.buffer_pools.iter().map(|pool| pool.blocks.len()).sum();
         let image_sum: usize = self.image_pools.iter().map(|pool| pool.blocks.len()).sum();
 
@@ -550,10 +557,75 @@ struct MemoryChunk {
     is_free: bool,
 }
 
+#[inline]
 fn calculate_bucket_index(size: u64) -> usize {
     if size <= 256 {
         0
     } else {
         MINIMAL_BUCKET_OFFSET - (size - 1u64).leading_zeros() as usize - 1
     }
+}
+
+fn count_unused_ranges(pools: &[MemoryPool]) -> usize {
+    let mut unused_count: usize = 0;
+    pools.iter().for_each(|buffer| {
+        collect_start_chunks(buffer).iter().for_each(|key| {
+            let mut next_key: ChunkKey = *key;
+            let mut previous_size: u64 = 0;
+            let mut previous_offset: u64 = 0;
+            loop {
+                let chunk = &buffer.chunks[next_key];
+                if chunk.offset != previous_offset + previous_size {
+                    unused_count += 1;
+                }
+
+                if let Some(key) = chunk.next {
+                    next_key = key
+                } else {
+                    break;
+                }
+
+                previous_size = chunk.size;
+                previous_offset = chunk.offset
+            }
+        });
+    });
+    unused_count
+}
+
+fn count_unused_bytes(pools: &[MemoryPool]) -> u64 {
+    let mut unused_bytes: u64 = 0;
+    pools.iter().for_each(|buffer| {
+        collect_start_chunks(buffer).iter().for_each(|key| {
+            let mut next_key: ChunkKey = *key;
+            let mut previous_size: u64 = 0;
+            let mut previous_offset: u64 = 0;
+            loop {
+                let chunk = &buffer.chunks[next_key];
+                if chunk.offset != previous_offset + previous_size {
+                    unused_bytes += chunk.offset - (previous_offset + previous_size);
+                }
+
+                if let Some(key) = chunk.next {
+                    next_key = key
+                } else {
+                    break;
+                }
+
+                previous_size = chunk.size;
+                previous_offset = chunk.offset
+            }
+        });
+    });
+    unused_bytes
+}
+
+#[inline]
+fn collect_start_chunks(buffer: &MemoryPool) -> Vec<ChunkKey> {
+    buffer
+        .chunks
+        .iter()
+        .filter(|(_, chunk)| chunk.previous.is_none())
+        .map(|(key, _)| key)
+        .collect()
 }
