@@ -10,8 +10,8 @@ use tracing::{debug, trace, warn};
 #[cfg(feature = "tracing")]
 use crate::debug_memory_types;
 use crate::{
-    align_up, find_memory_type_index, has_granularity_conflict, is_on_same_page, Allocation,
-    AllocationType, AllocatorError, AllocatorInfo, MemoryBlock, MemoryUsage, Result,
+    align_up, find_memory_type_index, has_granularity_conflict, is_on_same_page, AllocationInfo,
+    AllocationType, AllocatorError, AllocatorStatistic, MemoryBlock, MemoryUsage, Result,
 };
 
 /// A linear memory allocator. Memory is allocated by simply allocating new memory at the end
@@ -171,7 +171,7 @@ impl Drop for LinearAllocator {
     }
 }
 
-impl AllocatorInfo for LinearAllocator {
+impl AllocatorStatistic for LinearAllocator {
     fn allocation_count(&self) -> usize {
         self.allocation_count
     }
@@ -230,7 +230,7 @@ pub struct LinearAllocation {
     mapped_ptr: Option<std::ptr::NonNull<c_void>>,
 }
 
-impl Allocation for LinearAllocation {
+impl AllocationInfo for LinearAllocation {
     /// The `vk::DeviceMemory` of the allocation. Managed by the allocator.
     fn memory(&self) -> vk::DeviceMemory {
         self.device_memory

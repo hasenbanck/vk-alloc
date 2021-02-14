@@ -1,4 +1,4 @@
-//! A collection of memory allocators for the Vulkan API.
+//! A collection of Vulkan memory allocators.
 use std::ffi::c_void;
 
 use ash::version::DeviceV1_0;
@@ -6,16 +6,14 @@ use ash::vk;
 #[cfg(feature = "tracing")]
 use tracing::debug;
 
+pub use allocator::{Allocation, AllocationDescriptor, Allocator, AllocatorDescriptor};
 pub use error::AllocatorError;
-pub use general_allocator::{
-    GeneralAllocation, GeneralAllocationDescriptor, GeneralAllocator, GeneralAllocatorDescriptor,
-};
 pub use linear_allocator::{
     LinearAllocation, LinearAllocationDescriptor, LinearAllocator, LinearAllocatorDescriptor,
 };
 
+mod allocator;
 mod error;
-mod general_allocator;
 mod linear_allocator;
 
 type Result<T> = std::result::Result<T, AllocatorError>;
@@ -49,8 +47,8 @@ fn has_granularity_conflict(lhs_is_linear: bool, rhs_is_linear: bool) -> bool {
     lhs_is_linear != rhs_is_linear
 }
 
-/// Information about an allocation of all allocators.
-pub trait Allocation {
+/// Trait to get the memory, offset, size and mapped pointer of an allocation.
+pub trait AllocationInfo {
     /// The `vk::DeviceMemory` of the allocation. Managed by the allocator.
     fn memory(&self) -> vk::DeviceMemory;
 
@@ -94,8 +92,8 @@ pub trait Allocation {
     }
 }
 
-/// Trait to query an allocator for some information.
-pub trait AllocatorInfo {
+/// Trait to query an allocator for some statistics.
+pub trait AllocatorStatistic {
     /// Number of allocations.
     fn allocation_count(&self) -> usize;
 

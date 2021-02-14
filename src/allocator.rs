@@ -1,4 +1,4 @@
-//! Implements the general allocator.
+//! Implements the general purpose allocator.
 
 use std::ffi::c_void;
 
@@ -11,10 +11,10 @@ use tracing::debug;
 #[cfg(feature = "tracing")]
 use crate::debug_memory_types;
 use crate::{
-    align_up, find_memory_type_index, AllocationType, AllocatorError, AllocatorInfo, MemoryUsage,
-    Result,
+    align_up, find_memory_type_index, AllocationType, AllocatorError, AllocatorStatistic,
+    MemoryUsage, Result,
 };
-use crate::{Allocation, MemoryBlock};
+use crate::{AllocationInfo, MemoryBlock};
 
 // For a minimal bucket size of 256b.
 const MINIMAL_BUCKET_OFFSET: usize = 56;
@@ -23,21 +23,21 @@ const MINIMAL_BUCKET_OFFSET: usize = 56;
 ///
 /// Does save data that is too big for a memory block or marked as dedicated into a dedicated
 /// GPU memory block. Handles the selection of the right memory type for the user.
-pub struct GeneralAllocator {
+pub struct Allocator {
     device: ash::Device,
     buffer_pools: Vec<MemoryPool>,
     image_pools: Vec<MemoryPool>,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
 }
 
-impl GeneralAllocator {
+impl Allocator {
     /// Creates a new general purpose allocator.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn new(
         instance: &ash::Instance,
         physical_device: vk::PhysicalDevice,
         logical_device: &ash::Device,
-        descriptor: &GeneralAllocatorDescriptor,
+        descriptor: &AllocatorDescriptor,
     ) -> Self {
         let memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
@@ -98,7 +98,7 @@ impl GeneralAllocator {
         &mut self,
         buffer: vk::Buffer,
         location: MemoryUsage,
-    ) -> Result<GeneralAllocation> {
+    ) -> Result<Allocation> {
         let info = vk::BufferMemoryRequirementsInfo2::builder().buffer(buffer);
         let mut dedicated_requirements = vk::MemoryDedicatedRequirements::builder();
         let mut requirements =
@@ -114,7 +114,7 @@ impl GeneralAllocator {
         let is_dedicated = dedicated_requirements.prefers_dedicated_allocation == 1
             || dedicated_requirements.requires_dedicated_allocation == 1;
 
-        let alloc_decs = GeneralAllocationDescriptor {
+        let alloc_decs = AllocationDescriptor {
             requirements: memory_requirements,
             location,
             allocation_type: AllocationType::Buffer,
@@ -134,7 +134,7 @@ impl GeneralAllocator {
         &mut self,
         image: vk::Image,
         location: MemoryUsage,
-    ) -> Result<GeneralAllocation> {
+    ) -> Result<Allocation> {
         let info = vk::ImageMemoryRequirementsInfo2::builder().image(image);
         let mut dedicated_requirements = vk::MemoryDedicatedRequirements::builder();
         let mut requirements =
@@ -150,7 +150,7 @@ impl GeneralAllocator {
         let is_dedicated = dedicated_requirements.prefers_dedicated_allocation == 1
             || dedicated_requirements.requires_dedicated_allocation == 1;
 
-        let alloc_decs = GeneralAllocationDescriptor {
+        let alloc_decs = AllocationDescriptor {
             requirements: memory_requirements,
             location,
             allocation_type: AllocationType::OptimalImage,
@@ -177,10 +177,7 @@ impl GeneralAllocator {
     ///
     /// The biggest bucket size is the block size.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn allocate(
-        &mut self,
-        descriptor: &GeneralAllocationDescriptor,
-    ) -> Result<GeneralAllocation> {
+    pub fn allocate(&mut self, descriptor: &AllocationDescriptor) -> Result<Allocation> {
         let size = descriptor.requirements.size;
         let alignment = descriptor.requirements.alignment;
 
@@ -216,7 +213,7 @@ impl GeneralAllocator {
 
     /// Frees the allocation.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn free(&self, allocation: GeneralAllocation) -> Result<()> {
+    pub fn free(&self, allocation: Allocation) -> Result<()> {
         if let Some(chunk_key) = allocation.chunk_key {
             // TODO delete the chunk on the pool
         } else {
@@ -227,7 +224,7 @@ impl GeneralAllocator {
     }
 }
 
-impl AllocatorInfo for GeneralAllocator {
+impl AllocatorStatistic for Allocator {
     fn allocation_count(&self) -> usize {
         let buffer_count: usize = self
             .buffer_pools
@@ -280,15 +277,15 @@ impl AllocatorInfo for GeneralAllocator {
     }
 }
 
-/// Describes the configuration of a `GeneralAllocator`.
+/// Describes the configuration of a `Allocator`.
 #[derive(Debug, Clone)]
-pub struct GeneralAllocatorDescriptor {
+pub struct AllocatorDescriptor {
     /// The size of the blocks that are allocated. Needs to be a power of 2 in bytes. Default: 64 MiB.
     /// Calculate: x = log2(Size in bytes). 26 = log2(67108864)
     pub block_size: u8,
 }
 
-impl Default for GeneralAllocatorDescriptor {
+impl Default for AllocatorDescriptor {
     fn default() -> Self {
         Self { block_size: 26 }
     }
@@ -296,7 +293,7 @@ impl Default for GeneralAllocatorDescriptor {
 
 /// The descriptor for an allocation on the general allocator.
 #[derive(Debug, Clone)]
-pub struct GeneralAllocationDescriptor {
+pub struct AllocationDescriptor {
     /// Location where the memory allocation should be stored.
     pub location: MemoryUsage,
     /// Vulkan memory requirements for an allocation.
@@ -307,9 +304,9 @@ pub struct GeneralAllocationDescriptor {
     pub is_dedicated: bool,
 }
 
-/// An allocation of the `GeneralAllocator`.
+/// An allocation of the `Allocator`.
 #[derive(Clone, Debug)]
-pub struct GeneralAllocation {
+pub struct Allocation {
     pool_index: u32,
     block_key: Option<BlockKey>,
     chunk_key: Option<ChunkKey>,
@@ -319,7 +316,7 @@ pub struct GeneralAllocation {
     mapped_ptr: Option<std::ptr::NonNull<c_void>>,
 }
 
-impl Allocation for GeneralAllocation {
+impl AllocationInfo for Allocation {
     /// The `vk::DeviceMemory` of the allocation. Managed by the allocator.
     fn memory(&self) -> vk::DeviceMemory {
         self.device_memory
@@ -391,13 +388,13 @@ impl MemoryPool {
         }
     }
 
-    fn allocate_dedicated(&mut self, device: &ash::Device, size: u64) -> Result<GeneralAllocation> {
+    fn allocate_dedicated(&mut self, device: &ash::Device, size: u64) -> Result<Allocation> {
         let block = MemoryBlock::new(device, size, self.memory_type_index, self.is_mappable)?;
 
         let device_memory = block.device_memory;
         let mapped_ptr = std::ptr::NonNull::new(block.mapped_ptr);
 
-        Ok(GeneralAllocation {
+        Ok(Allocation {
             pool_index: self.pool_index,
             block_key: Some(self.blocks.insert(block)),
             chunk_key: None,
@@ -408,12 +405,7 @@ impl MemoryPool {
         })
     }
 
-    fn allocate(
-        &mut self,
-        device: &ash::Device,
-        size: u64,
-        alignment: u64,
-    ) -> Result<GeneralAllocation> {
+    fn allocate(&mut self, device: &ash::Device, size: u64, alignment: u64) -> Result<Allocation> {
         let mut bucket_index = calculate_bucket_index(size);
 
         // Make sure that we don't try to allocate a chunk bigger than the block.
@@ -503,7 +495,7 @@ impl MemoryPool {
 
                 let block = &self.blocks[lhs.block_key];
 
-                return Ok(GeneralAllocation {
+                return Ok(Allocation {
                     pool_index: self.pool_index,
                     block_key: Some(lhs.block_key),
                     chunk_key: Some(candidate.key),

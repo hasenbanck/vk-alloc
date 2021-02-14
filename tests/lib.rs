@@ -1,9 +1,9 @@
 use ash::vk;
 
 use vk_alloc::{
-    Allocation, AllocationType, AllocatorError, AllocatorInfo, GeneralAllocation,
-    GeneralAllocationDescriptor, GeneralAllocator, GeneralAllocatorDescriptor,
-    LinearAllocationDescriptor, LinearAllocator, LinearAllocatorDescriptor, MemoryUsage,
+    AllocationDescriptor, AllocationInfo, AllocationType, Allocator, AllocatorDescriptor,
+    AllocatorError, AllocatorStatistic, LinearAllocationDescriptor, LinearAllocator,
+    LinearAllocatorDescriptor, MemoryUsage,
 };
 
 pub mod fixture;
@@ -14,13 +14,13 @@ fn vulkan_context_creation() {
 }
 
 #[test]
-fn global_allocator_creation() {
+fn allocator_creation() {
     let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
-    GeneralAllocator::new(
+    Allocator::new(
         &ctx.instance,
         ctx.physical_device,
         &ctx.logical_device,
-        &GeneralAllocatorDescriptor {
+        &AllocatorDescriptor {
             ..Default::default()
         },
     );
@@ -186,17 +186,17 @@ fn linear_allocator_allocation_oom() -> Result<(), AllocatorError> {
 }
 
 #[test]
-fn general_allocator_allocation_1024() -> Result<(), AllocatorError> {
+fn allocator_allocation_1024() -> Result<(), AllocatorError> {
     let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
-    let mut alloc = GeneralAllocator::new(
+    let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
         &ctx.logical_device,
-        &GeneralAllocatorDescriptor { block_size: 20 }, // 1 MB
+        &AllocatorDescriptor { block_size: 20 }, // 1 MB
     );
 
     for i in 0..1024 {
-        let allocation = alloc.allocate(&GeneralAllocationDescriptor {
+        let allocation = alloc.allocate(&AllocationDescriptor {
             location: MemoryUsage::GpuOnly,
             requirements: vk::MemoryRequirements::builder()
                 .alignment(512)
@@ -229,17 +229,17 @@ fn general_allocator_allocation_1024() -> Result<(), AllocatorError> {
 }
 
 #[test]
-fn general_allocator_allocation_256() -> Result<(), AllocatorError> {
+fn allocator_allocation_256() -> Result<(), AllocatorError> {
     let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
-    let mut alloc = GeneralAllocator::new(
+    let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
         &ctx.logical_device,
-        &GeneralAllocatorDescriptor { block_size: 20 }, // 1 MB
+        &AllocatorDescriptor { block_size: 20 }, // 1 MB
     );
 
     for i in 0..1024 {
-        let allocation = alloc.allocate(&GeneralAllocationDescriptor {
+        let allocation = alloc.allocate(&AllocationDescriptor {
             location: MemoryUsage::GpuOnly,
             requirements: vk::MemoryRequirements::builder()
                 .alignment(1024)
