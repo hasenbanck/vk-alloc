@@ -3,7 +3,7 @@ use ash::vk;
 use vk_alloc::{
     Allocation, AllocationType, AllocatorError, AllocatorInfo, GeneralAllocation,
     GeneralAllocationDescriptor, GeneralAllocator, GeneralAllocatorDescriptor,
-    LinearAllocationDescriptor, LinearAllocator, LinearAllocatorDescriptor, MemoryLocation,
+    LinearAllocationDescriptor, LinearAllocator, LinearAllocatorDescriptor, MemoryUsage,
 };
 
 pub mod fixture;
@@ -48,7 +48,7 @@ fn linear_allocator_allocation_1024() -> Result<(), AllocatorError> {
         ctx.physical_device,
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
-            location: MemoryLocation::CpuToGpu,
+            location: MemoryUsage::CpuToGpu,
             block_size: 20, // 1 MB
         },
     )?;
@@ -82,7 +82,7 @@ fn linear_allocator_allocation_256() -> Result<(), AllocatorError> {
         ctx.physical_device,
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
-            location: MemoryLocation::CpuToGpu,
+            location: MemoryUsage::CpuToGpu,
             block_size: 20, // 1 MB
         },
     )?;
@@ -116,7 +116,7 @@ fn linear_allocator_allocation_granularity() -> Result<(), AllocatorError> {
         ctx.physical_device,
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
-            location: MemoryLocation::CpuToGpu,
+            location: MemoryUsage::CpuToGpu,
             block_size: 20, // 1 MB
         },
     )?;
@@ -154,7 +154,7 @@ fn linear_allocator_allocation_oom() -> Result<(), AllocatorError> {
         ctx.physical_device,
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
-            location: MemoryLocation::CpuToGpu,
+            location: MemoryUsage::CpuToGpu,
             block_size: 20, // 1 MB
         },
     )?;
@@ -183,7 +183,7 @@ fn general_allocator_allocation_1024() -> Result<(), AllocatorError> {
 
     for i in 0..1024 {
         let allocation = alloc.allocate(&GeneralAllocationDescriptor {
-            location: MemoryLocation::GpuOnly,
+            location: MemoryUsage::GpuOnly,
             requirements: vk::MemoryRequirements::builder()
                 .alignment(512)
                 .size(1024)
@@ -221,7 +221,7 @@ fn general_allocator_allocation_256() -> Result<(), AllocatorError> {
 
     for i in 0..1024 {
         let allocation = alloc.allocate(&GeneralAllocationDescriptor {
-            location: MemoryLocation::GpuOnly,
+            location: MemoryUsage::GpuOnly,
             requirements: vk::MemoryRequirements::builder()
                 .alignment(1024)
                 .size(256)

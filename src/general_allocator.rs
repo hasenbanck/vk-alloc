@@ -11,8 +11,8 @@ use tracing::debug;
 #[cfg(feature = "tracing")]
 use crate::debug_memory_types;
 use crate::{
-    align_up, find_memory_type_index, AllocationType, AllocatorError, AllocatorInfo,
-    MemoryLocation, Result,
+    align_up, find_memory_type_index, AllocationType, AllocatorError, AllocatorInfo, MemoryUsage,
+    Result,
 };
 use crate::{Allocation, MemoryBlock};
 
@@ -97,7 +97,7 @@ impl GeneralAllocator {
     pub fn allocate_memory_for_buffer(
         &mut self,
         buffer: vk::Buffer,
-        location: MemoryLocation,
+        location: MemoryUsage,
     ) -> Result<GeneralAllocation> {
         let info = vk::BufferMemoryRequirementsInfo2::builder().buffer(buffer);
         let mut dedicated_requirements = vk::MemoryDedicatedRequirements::builder();
@@ -133,7 +133,7 @@ impl GeneralAllocator {
     pub fn allocate_memory_for_image(
         &mut self,
         image: vk::Image,
-        location: MemoryLocation,
+        location: MemoryUsage,
     ) -> Result<GeneralAllocation> {
         let info = vk::ImageMemoryRequirementsInfo2::builder().image(image);
         let mut dedicated_requirements = vk::MemoryDedicatedRequirements::builder();
@@ -233,6 +233,7 @@ impl AllocatorInfo for GeneralAllocator {
             .buffer_pools
             .iter()
             .flat_map(|pool| &pool.chunks)
+            .filter(|(_, chunk)| !chunk.is_free)
             .map(|(_, chunk)| chunk.size)
             .sum();
 
@@ -240,6 +241,7 @@ impl AllocatorInfo for GeneralAllocator {
             .image_pools
             .iter()
             .flat_map(|pool| &pool.chunks)
+            .filter(|(_, chunk)| !chunk.is_free)
             .map(|(_, chunk)| chunk.size)
             .sum();
 
@@ -289,7 +291,7 @@ impl Default for GeneralAllocatorDescriptor {
 #[derive(Debug, Clone)]
 pub struct GeneralAllocationDescriptor {
     /// Location where the memory allocation should be stored.
-    pub location: MemoryLocation,
+    pub location: MemoryUsage,
     /// Vulkan memory requirements for an allocation.
     pub requirements: vk::MemoryRequirements,
     /// The type of the allocation.
@@ -399,7 +401,6 @@ impl MemoryPool {
         })
     }
 
-    // TODO rethink the alignment stuff. The new allocations currently don't start on their own allocation.
     fn allocate(
         &mut self,
         device: &ash::Device,
@@ -460,19 +461,19 @@ impl MemoryPool {
 
                 // Split the lhs chunk and register the rhs as a new free chunk.
                 let rhs_chunk_key = if candidate.free_size != 0 {
-                    let lhs_chunk = self.chunks[candidate.key].clone();
+                    let lhs = self.chunks[candidate.key].clone();
 
-                    let lhs_end = lhs_chunk.offset + size;
-                    let rhs_offset = align_up(lhs_end, alignment);
-                    let padding = rhs_offset - lhs_end;
-                    let rhs_size = lhs_chunk.size - (size + padding);
+                    let lhs_aligned_offset = align_up(lhs.offset, alignment);
+                    let lhs_padding = lhs_aligned_offset - lhs.offset;
+                    let rhs_offset = lhs.offset + size + lhs_padding;
+                    let rhs_size = lhs.size - (lhs_padding + size);
 
                     let rhs_chunk_key = self.chunks.insert(MemoryChunk {
-                        block_key: lhs_chunk.block_key,
+                        block_key: lhs.block_key,
                         size: rhs_size,
                         offset: rhs_offset,
                         previous: Some(candidate.key),
-                        next: lhs_chunk.next,
+                        next: lhs.next,
                         is_free: true,
                     });
 
@@ -484,23 +485,24 @@ impl MemoryPool {
                     None
                 };
 
-                let chunk = &mut self.chunks[candidate.key];
-                chunk.is_free = false;
-                chunk.size = size;
+                let lhs = &mut self.chunks[candidate.key];
+                lhs.is_free = false;
+                lhs.offset = align_up(lhs.offset, alignment);
+                lhs.size = size;
 
                 if let Some(new_chunk_key) = rhs_chunk_key {
-                    chunk.next = Some(new_chunk_key);
+                    lhs.next = Some(new_chunk_key);
                 }
 
-                let block = &self.blocks[chunk.block_key];
+                let block = &self.blocks[lhs.block_key];
 
                 return Ok(GeneralAllocation {
                     pool_index: self.pool_index,
-                    block_key: Some(chunk.block_key),
+                    block_key: Some(lhs.block_key),
                     chunk_key: Some(candidate.key),
                     device_memory: block.device_memory,
-                    offset: chunk.offset,
-                    size: chunk.size,
+                    offset: lhs.offset,
+                    size: lhs.size,
                     mapped_ptr: std::ptr::NonNull::new(block.mapped_ptr),
                 });
             }

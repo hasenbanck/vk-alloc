@@ -95,6 +95,7 @@ pub trait Allocation {
 }
 
 /// Trait to query a allocator for some information.
+/// TODO be more specific what these values mean and adjust the values in the linear and global allocator.
 pub trait AllocatorInfo {
     /// Allocated memory in bytes.
     fn allocated(&self) -> u64;
@@ -126,9 +127,9 @@ impl AllocationType {
     }
 }
 
-/// The location of the memory.
+/// The intended usage of the memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemoryLocation {
+pub enum MemoryUsage {
     /// Mainly used for uploading data to the GPU (DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT).
     CpuToGpu,
     /// Used as fast access memory for the GPU (DEVICE_LOCAL).
@@ -207,18 +208,18 @@ impl MemoryBlock {
 
 fn find_memory_type_index(
     memory_properties: &vk::PhysicalDeviceMemoryProperties,
-    location: MemoryLocation,
+    location: MemoryUsage,
     memory_type_bits: u32,
 ) -> Result<usize> {
     // Prefer fast path memory when doing transfers between host and device.
     let memory_property_flags = match location {
-        MemoryLocation::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        MemoryLocation::CpuToGpu => {
+        MemoryUsage::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        MemoryUsage::CpuToGpu => {
             vk::MemoryPropertyFlags::HOST_VISIBLE
                 | vk::MemoryPropertyFlags::HOST_COHERENT
                 | vk::MemoryPropertyFlags::DEVICE_LOCAL
         }
-        MemoryLocation::GpuToCpu => {
+        MemoryUsage::GpuToCpu => {
             vk::MemoryPropertyFlags::HOST_VISIBLE
                 | vk::MemoryPropertyFlags::HOST_COHERENT
                 | vk::MemoryPropertyFlags::HOST_CACHED
@@ -231,11 +232,11 @@ fn find_memory_type_index(
     // Lose memory requirements if no fast path is found.
     if memory_type_index_optional.is_none() {
         let memory_property_flags = match location {
-            MemoryLocation::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            MemoryLocation::CpuToGpu => {
+            MemoryUsage::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            MemoryUsage::CpuToGpu => {
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
             }
-            MemoryLocation::GpuToCpu => {
+            MemoryUsage::GpuToCpu => {
                 vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
             }
         };
