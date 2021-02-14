@@ -341,7 +341,6 @@ struct BestFitCandidate {
     key: ChunkKey,
     free_list_index: usize,
     free_size: u64,
-    aligned_size: u64,
 }
 
 // TODO benchmark me
@@ -400,6 +399,7 @@ impl MemoryPool {
         })
     }
 
+    // TODO rethink the alignment stuff. The new allocations currently don't start on their own allocation.
     fn allocate(
         &mut self,
         device: &ash::Device,
@@ -449,7 +449,6 @@ impl MemoryPool {
                             key: *key,
                             free_list_index: index,
                             free_size,
-                            aligned_size,
                         })
                     }
                 }
@@ -463,12 +462,12 @@ impl MemoryPool {
                 let rhs_chunk_key = if candidate.free_size != 0 {
                     let lhs_chunk = self.chunks[candidate.key].clone();
 
-                    // TODO the alignment is off.
+                    let lhs_end = lhs_chunk.offset + size;
+                    let rhs_offset = align_up(lhs_end, alignment);
+                    let padding = rhs_offset - lhs_end;
+                    let rhs_size = lhs_chunk.size - (size + padding);
 
-                    let rhs_offset = lhs_chunk.offset + candidate.aligned_size;
-                    let rhs_size = lhs_chunk.size - candidate.aligned_size;
-
-                    let rhx_chunk_key = self.chunks.insert(MemoryChunk {
+                    let rhs_chunk_key = self.chunks.insert(MemoryChunk {
                         block_key: lhs_chunk.block_key,
                         size: rhs_size,
                         offset: rhs_offset,
@@ -478,9 +477,9 @@ impl MemoryPool {
                     });
 
                     let rhs_bucket_index = calculate_bucket_index(rhs_size);
-                    self.free_chunks[rhs_bucket_index].push(rhx_chunk_key);
+                    self.free_chunks[rhs_bucket_index].push(rhs_chunk_key);
 
-                    Some(rhx_chunk_key)
+                    Some(rhs_chunk_key)
                 } else {
                     None
                 };

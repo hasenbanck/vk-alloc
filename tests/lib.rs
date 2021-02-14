@@ -234,7 +234,7 @@ fn general_allocator_allocation_256() -> Result<(), AllocatorError> {
         assert_eq!(allocation.offset(), i * 1024);
     }
 
-    assert_eq!(alloc.allocated(), 1048576);
+    assert_eq!(alloc.allocated(), 262144);
     assert_eq!(alloc.size(), 1048576);
 
     // TODO
