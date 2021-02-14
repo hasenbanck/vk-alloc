@@ -16,8 +16,8 @@ use crate::{
 };
 use crate::{AllocationInfo, MemoryBlock};
 
-// For a minimal bucket size of 256b.
-const MINIMAL_BUCKET_OFFSET: usize = 56;
+// For a minimal bucket size of 256b as log2.
+const MINIMAL_BUCKET_SIZE_LOG2: u32 = 8;
 
 /// The general purpose memory allocator. Implemented as a free list allocator.
 ///
@@ -374,7 +374,7 @@ struct MemoryPool {
     blocks: SlotMap<BlockKey, MemoryBlock>,
     chunks: SlotMap<ChunkKey, MemoryChunk>,
     free_chunks: Vec<Vec<ChunkKey>>,
-    max_bucket_index: usize,
+    max_bucket_index: u32,
 }
 
 impl MemoryPool {
@@ -383,11 +383,23 @@ impl MemoryPool {
         let chunks = SlotMap::with_capacity_and_key(1024);
 
         // The smallest bucket size is 256b, which is log2(256) = 8. So the maximal bucket size is
-        // "64 - log2(block_size - 1) - 8". We can't have a free chunk that is bigger than a block.
-        let num_buckets = MINIMAL_BUCKET_OFFSET - (block_size - 1u64).leading_zeros() as usize;
+        // "64 - 8 - log2(block_size - 1)". We can't have a free chunk that is bigger than a block.
+        let num_buckets = 64 - MINIMAL_BUCKET_SIZE_LOG2 - (block_size - 1u64).leading_zeros();
 
-        let empty_list: Vec<ChunkKey> = Vec::with_capacity(1024);
-        let free_chunks = vec![empty_list; num_buckets];
+        // We preallocate only a reasonable amount of entries for each bucket.
+        //The highest bucket for example can only hold two values at most.
+        let free_chunks = (0..num_buckets)
+            .into_iter()
+            .map(|i| {
+                let min_bucket_element_size = if i == 0 {
+                    512
+                } else {
+                    2u64.pow(MINIMAL_BUCKET_SIZE_LOG2 - 1 + i)
+                };
+                let max_elements = (block_size / min_bucket_element_size) as usize;
+                Vec::with_capacity(512.min(max_elements))
+            })
+            .collect();
 
         Self {
             pool_index,
@@ -431,7 +443,7 @@ impl MemoryPool {
                 bucket_index = self.max_bucket_index;
             }
 
-            let free_list = &self.free_chunks[bucket_index];
+            let free_list = &self.free_chunks[bucket_index as usize];
 
             // Find best fit in this bucket.
             let mut best_fit_candidate: Option<BestFitCandidate> = None;
@@ -469,7 +481,7 @@ impl MemoryPool {
 
             // Allocate using the best fit candidate.
             if let Some(candidate) = &best_fit_candidate {
-                self.free_chunks[bucket_index].remove(candidate.free_list_index);
+                self.free_chunks[bucket_index as usize].remove(candidate.free_list_index);
 
                 // Split the lhs chunk and register the rhs as a new free chunk.
                 let rhs_chunk_key = if candidate.free_size != 0 {
@@ -490,7 +502,7 @@ impl MemoryPool {
                     });
 
                     let rhs_bucket_index = calculate_bucket_index(rhs_size);
-                    self.free_chunks[rhs_bucket_index].push(rhs_chunk_key);
+                    self.free_chunks[rhs_bucket_index as usize].push(rhs_chunk_key);
 
                     Some(rhs_chunk_key)
                 } else {
@@ -540,7 +552,7 @@ impl MemoryPool {
             is_free: true,
         });
 
-        self.free_chunks[self.max_bucket_index].push(chunk_key);
+        self.free_chunks[self.max_bucket_index as usize].push(chunk_key);
 
         Ok(())
     }
@@ -563,11 +575,11 @@ struct MemoryChunk {
 }
 
 #[inline]
-fn calculate_bucket_index(size: u64) -> usize {
+fn calculate_bucket_index(size: u64) -> u32 {
     if size <= 256 {
         0
     } else {
-        MINIMAL_BUCKET_OFFSET - (size - 1u64).leading_zeros() as usize - 1
+        64 - MINIMAL_BUCKET_SIZE_LOG2 - (size - 1u64).leading_zeros() - 1
     }
 }
 
