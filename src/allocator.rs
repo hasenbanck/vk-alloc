@@ -223,17 +223,32 @@ impl Allocator {
         };
 
         if let Some(chunk_key) = allocation.chunk_key {
-            // TODO delete the chunk on the pool
-            // TODO merge with free chunks on the left and right
+            memory_pool.free(chunk_key)?;
         } else {
             let mut block = memory_pool
                 .blocks
                 .remove(allocation.block_key)
-                .ok_or(AllocatorError::UnknownMemoryBlock)?;
+                .ok_or(AllocatorError::UnknownMemoryLocation)?;
             block.destroy(&self.device);
         }
 
         Ok(())
+    }
+}
+
+impl Drop for Allocator {
+    fn drop(&mut self) {
+        let device = self.device.clone();
+        self.buffer_pools.iter_mut().for_each(|pool| {
+            pool.blocks
+                .iter_mut()
+                .for_each(|(_, block)| block.destroy(&device))
+        });
+        self.image_pools.iter_mut().for_each(|pool| {
+            pool.blocks
+                .iter_mut()
+                .for_each(|(_, block)| block.destroy(&device))
+        });
     }
 }
 
@@ -387,7 +402,7 @@ impl MemoryPool {
         let num_buckets = 64 - MINIMAL_BUCKET_SIZE_LOG2 - (block_size - 1u64).leading_zeros();
 
         // We preallocate only a reasonable amount of entries for each bucket.
-        //The highest bucket for example can only hold two values at most.
+        // The highest bucket for example can only hold two values at most.
         let free_chunks = (0..num_buckets)
             .into_iter()
             .map(|i| {
@@ -557,8 +572,78 @@ impl MemoryPool {
         Ok(())
     }
 
-    fn free(&mut self, device: &ash::Device, chunk_key: ChunkKey) -> Result<()> {
-        todo!();
+    fn free(&mut self, chunk_key: ChunkKey) -> Result<()> {
+        let (size, previous_key, next_key) = {
+            let chunk = &mut self.chunks[chunk_key];
+            chunk.is_free = true;
+            (chunk.size, chunk.previous, chunk.next)
+        };
+
+        if let Some(next_key) = next_key {
+            if self.chunks[next_key].is_free {
+                self.merge_rhs_into_lhs_chunk(chunk_key, next_key, true)?;
+            }
+        }
+
+        let mut is_chunk_merged = false;
+
+        if let Some(previous_key) = previous_key {
+            if self.chunks[previous_key].is_free {
+                self.merge_rhs_into_lhs_chunk(previous_key, chunk_key, false)?;
+                is_chunk_merged = true
+            }
+        }
+
+        if !is_chunk_merged {
+            let chunk_bucket_index = calculate_bucket_index(size);
+            self.free_chunks[chunk_bucket_index as usize].push(chunk_key);
+        }
+
+        Ok(())
+    }
+
+    fn merge_rhs_into_lhs_chunk(
+        &mut self,
+        lhs_chunk_key: ChunkKey,
+        rhs_chunk_key: ChunkKey,
+        cleanup_free_list: bool,
+    ) -> Result<()> {
+        let (rhs_size, rhs_offset, rhs_next) = {
+            let chunk = self.chunks.remove(rhs_chunk_key).ok_or_else(|| {
+                AllocatorError::Internal("chunk key not present in chunk slotmap".to_owned())
+            })?;
+            if cleanup_free_list {
+                self.remove_from_free_list(rhs_chunk_key, chunk.size)?;
+            }
+
+            (chunk.size, chunk.offset, chunk.next)
+        };
+
+        let lhs_chunk = &mut self.chunks[lhs_chunk_key];
+        lhs_chunk.next = rhs_next;
+        lhs_chunk.size = (rhs_offset + rhs_size) - lhs_chunk.offset;
+
+        if let Some(rhs_next) = rhs_next {
+            let chunk = &mut self.chunks[rhs_next];
+            chunk.previous = Some(lhs_chunk_key);
+        }
+
+        Ok(())
+    }
+
+    fn remove_from_free_list(&mut self, chunk_key: ChunkKey, chunk_size: u64) -> Result<()> {
+        let bucket_index = calculate_bucket_index(chunk_size);
+        let free_list_index = self.free_chunks[bucket_index as usize]
+            .iter()
+            .enumerate()
+            .find(|(_, key)| **key == chunk_key)
+            .map(|(index, _)| index)
+            .ok_or_else(|| {
+                AllocatorError::Internal(
+                    "can't find chunk key in expected free list bucket".to_owned(),
+                )
+            })?;
+        self.free_chunks.remove(free_list_index);
         Ok(())
     }
 }

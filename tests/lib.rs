@@ -1,9 +1,9 @@
 use ash::vk;
 
 use vk_alloc::{
-    AllocationDescriptor, AllocationInfo, AllocationType, Allocator, AllocatorDescriptor,
-    AllocatorError, AllocatorStatistic, LinearAllocationDescriptor, LinearAllocator,
-    LinearAllocatorDescriptor, MemoryUsage,
+    Allocation, AllocationDescriptor, AllocationInfo, AllocationType, Allocator,
+    AllocatorDescriptor, AllocatorError, AllocatorStatistic, LinearAllocationDescriptor,
+    LinearAllocator, LinearAllocatorDescriptor, MemoryUsage,
 };
 
 pub mod fixture;
@@ -27,7 +27,7 @@ fn allocator_creation() {
 }
 
 #[test]
-fn linear_allocator_creation() -> Result<(), AllocatorError> {
+fn linear_allocator_creation() {
     let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
     LinearAllocator::new(
         &ctx.instance,
@@ -36,12 +36,12 @@ fn linear_allocator_creation() -> Result<(), AllocatorError> {
         &LinearAllocatorDescriptor {
             ..Default::default()
         },
-    )?;
-    Ok(())
+    )
+    .unwrap();
 }
 
 #[test]
-fn linear_allocator_allocation_1024() -> Result<(), AllocatorError> {
+fn linear_allocator_allocation_1024() {
     let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
     let mut alloc = LinearAllocator::new(
         &ctx.instance,
@@ -51,14 +51,17 @@ fn linear_allocator_allocation_1024() -> Result<(), AllocatorError> {
             location: MemoryUsage::CpuToGpu,
             block_size: 20, // 1 MB
         },
-    )?;
+    )
+    .unwrap();
 
     for i in 0..1024 {
-        let allocation = alloc.allocate(&LinearAllocationDescriptor {
-            size: 1024,
-            alignment: 512,
-            allocation_type: AllocationType::Buffer,
-        })?;
+        let allocation = alloc
+            .allocate(&LinearAllocationDescriptor {
+                size: 1024,
+                alignment: 512,
+                allocation_type: AllocationType::Buffer,
+            })
+            .unwrap();
         assert_eq!(allocation.size(), 1024);
         assert_eq!(allocation.offset(), i * 1024);
     }
@@ -74,12 +77,10 @@ fn linear_allocator_allocation_1024() -> Result<(), AllocatorError> {
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
-
-    Ok(())
 }
 
 #[test]
-fn linear_allocator_allocation_256() -> Result<(), AllocatorError> {
+fn linear_allocator_allocation_256() {
     let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
     let mut alloc = LinearAllocator::new(
         &ctx.instance,
@@ -89,14 +90,17 @@ fn linear_allocator_allocation_256() -> Result<(), AllocatorError> {
             location: MemoryUsage::CpuToGpu,
             block_size: 20, // 1 MB
         },
-    )?;
+    )
+    .unwrap();
 
     for i in 0..1024 {
-        let allocation = alloc.allocate(&LinearAllocationDescriptor {
-            size: 256,
-            alignment: 1024,
-            allocation_type: AllocationType::Buffer,
-        })?;
+        let allocation = alloc
+            .allocate(&LinearAllocationDescriptor {
+                size: 256,
+                alignment: 1024,
+                allocation_type: AllocationType::Buffer,
+            })
+            .unwrap();
         assert_eq!(allocation.size(), 256);
         assert_eq!(allocation.offset(), i * 1024);
     }
@@ -112,12 +116,10 @@ fn linear_allocator_allocation_256() -> Result<(), AllocatorError> {
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
-
-    Ok(())
 }
 
 #[test]
-fn linear_allocator_allocation_granularity() -> Result<(), AllocatorError> {
+fn linear_allocator_allocation_granularity() {
     let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
     let mut alloc = LinearAllocator::new(
         &ctx.instance,
@@ -127,21 +129,26 @@ fn linear_allocator_allocation_granularity() -> Result<(), AllocatorError> {
             location: MemoryUsage::CpuToGpu,
             block_size: 20, // 1 MB
         },
-    )?;
+    )
+    .unwrap();
 
-    let allocation = alloc.allocate(&LinearAllocationDescriptor {
-        size: 256,
-        alignment: 256,
-        allocation_type: AllocationType::Buffer,
-    })?;
+    let allocation = alloc
+        .allocate(&LinearAllocationDescriptor {
+            size: 256,
+            alignment: 256,
+            allocation_type: AllocationType::Buffer,
+        })
+        .unwrap();
     assert_eq!(allocation.size(), 256);
     assert_eq!(allocation.offset(), 0);
 
-    let allocation = alloc.allocate(&LinearAllocationDescriptor {
-        size: 256,
-        alignment: 256,
-        allocation_type: AllocationType::OptimalImage,
-    })?;
+    let allocation = alloc
+        .allocate(&LinearAllocationDescriptor {
+            size: 256,
+            alignment: 256,
+            allocation_type: AllocationType::OptimalImage,
+        })
+        .unwrap();
     assert_eq!(allocation.size(), 256);
     assert_eq!(allocation.offset(), ctx.buffer_image_granularity);
 
@@ -156,12 +163,10 @@ fn linear_allocator_allocation_granularity() -> Result<(), AllocatorError> {
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
-
-    Ok(())
 }
 
 #[test]
-fn linear_allocator_allocation_oom() -> Result<(), AllocatorError> {
+fn linear_allocator_allocation_oom() {
     let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
     let mut alloc = LinearAllocator::new(
         &ctx.instance,
@@ -171,7 +176,8 @@ fn linear_allocator_allocation_oom() -> Result<(), AllocatorError> {
             location: MemoryUsage::CpuToGpu,
             block_size: 20, // 1 MB
         },
-    )?;
+    )
+    .unwrap();
 
     let allocation = alloc.allocate(&LinearAllocationDescriptor {
         size: 1050000,
@@ -181,12 +187,10 @@ fn linear_allocator_allocation_oom() -> Result<(), AllocatorError> {
 
     assert!(allocation.is_err());
     assert_eq!(AllocatorError::OutOfMemory, allocation.err().unwrap());
-
-    Ok(())
 }
 
 #[test]
-fn allocator_allocation_1024() -> Result<(), AllocatorError> {
+fn allocator_simple_free() {
     let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
     let mut alloc = Allocator::new(
         &ctx.instance,
@@ -195,8 +199,8 @@ fn allocator_allocation_1024() -> Result<(), AllocatorError> {
         &AllocatorDescriptor { block_size: 20 }, // 1 MB
     );
 
-    for i in 0..1024 {
-        let allocation = alloc.allocate(&AllocationDescriptor {
+    let allocation = alloc
+        .allocate(&AllocationDescriptor {
             location: MemoryUsage::GpuOnly,
             requirements: vk::MemoryRequirements::builder()
                 .alignment(512)
@@ -205,31 +209,22 @@ fn allocator_allocation_1024() -> Result<(), AllocatorError> {
                 .build(),
             allocation_type: AllocationType::Buffer,
             is_dedicated: false,
-        })?;
-        assert_eq!(allocation.size(), 1024);
-        assert_eq!(allocation.offset(), i * 1024);
-    }
+        })
+        .unwrap();
 
-    assert_eq!(alloc.allocation_count(), 1024);
-    assert_eq!(alloc.unused_range_count(), 0);
-    assert_eq!(alloc.used_bytes(), 1024 * 1024);
-    assert_eq!(alloc.unused_bytes(), 0);
+    assert_eq!(allocation.size(), 1024);
+    assert_eq!(allocation.offset(), 0);
 
-    // TODO
-    /*
-    alloc.free();
+    alloc.free(allocation).unwrap();
 
     assert_eq!(alloc.allocation_count(), 0);
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
-    */
-
-    Ok(())
 }
 
 #[test]
-fn allocator_allocation_256() -> Result<(), AllocatorError> {
+fn allocator_allocation_1024() {
     let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
     let mut alloc = Allocator::new(
         &ctx.instance,
@@ -238,35 +233,101 @@ fn allocator_allocation_256() -> Result<(), AllocatorError> {
         &AllocatorDescriptor { block_size: 20 }, // 1 MB
     );
 
-    for i in 0..1024 {
-        let allocation = alloc.allocate(&AllocationDescriptor {
-            location: MemoryUsage::GpuOnly,
-            requirements: vk::MemoryRequirements::builder()
-                .alignment(1024)
-                .size(256)
-                .memory_type_bits(u32::MAX)
-                .build(),
-            allocation_type: AllocationType::Buffer,
-            is_dedicated: false,
-        })?;
-        assert_eq!(allocation.size(), 256);
-        assert_eq!(allocation.offset(), i * 1024);
-    }
+    let mut allocations: Vec<Allocation> = (0..1024)
+        .into_iter()
+        .map(|i| {
+            let allocation = alloc
+                .allocate(&AllocationDescriptor {
+                    location: MemoryUsage::GpuOnly,
+                    requirements: vk::MemoryRequirements::builder()
+                        .alignment(512)
+                        .size(1024)
+                        .memory_type_bits(u32::MAX)
+                        .build(),
+                    allocation_type: AllocationType::Buffer,
+                    is_dedicated: false,
+                })
+                .unwrap();
+            assert_eq!(allocation.size(), 1024);
+            assert_eq!(allocation.offset(), i * 1024);
+
+            allocation
+        })
+        .collect();
 
     assert_eq!(alloc.allocation_count(), 1024);
-    assert_eq!(alloc.unused_range_count(), 1023);
-    assert_eq!(alloc.used_bytes(), 1024 * 256);
-    assert_eq!(alloc.unused_bytes(), 1023 * 768);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 1024 * 1024);
+    assert_eq!(alloc.unused_bytes(), 0);
 
-    // TODO
-    /*
-    alloc.free();
+    allocations
+        .drain(..)
+        .enumerate()
+        .for_each(|(i, allocation)| {
+            alloc.free(allocation).unwrap();
+
+            assert_eq!(alloc.allocation_count(), (1023 - i));
+            assert_eq!(alloc.used_bytes(), 1024 * (1023 - i) as u64);
+        });
 
     assert_eq!(alloc.allocation_count(), 0);
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
-    */
+}
 
-    Ok(())
+#[test]
+fn allocator_allocation_256() {
+    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
+    let mut alloc = Allocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &ctx.logical_device,
+        &AllocatorDescriptor { block_size: 20 }, // 1 MB
+    );
+
+    let mut allocations: Vec<Allocation> = (0..1024)
+        .into_iter()
+        .map(|i| {
+            let allocation = alloc
+                .allocate(&AllocationDescriptor {
+                    location: MemoryUsage::GpuOnly,
+                    requirements: vk::MemoryRequirements::builder()
+                        .alignment(1024)
+                        .size(256)
+                        .memory_type_bits(u32::MAX)
+                        .build(),
+                    allocation_type: AllocationType::Buffer,
+                    is_dedicated: false,
+                })
+                .unwrap();
+            assert_eq!(allocation.size(), 256);
+            assert_eq!(allocation.offset(), i * 1024);
+
+            allocation
+        })
+        .collect();
+
+    assert_eq!(alloc.allocation_count(), 1024);
+    assert_eq!(alloc.unused_range_count(), 1023);
+    assert_eq!(alloc.used_bytes(), 256 * 1024);
+    assert_eq!(alloc.unused_bytes(), 768 * 1023);
+
+    allocations
+        .drain(..)
+        .enumerate()
+        .for_each(|(i, allocation)| {
+            alloc.free(allocation).unwrap();
+
+            assert_eq!(alloc.allocation_count(), 1023 - i);
+            assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as u64);
+            // sic! We free from the front. The padding is part of the next chunk.
+            assert_eq!(alloc.unused_range_count(), 1023 - i);
+            assert_eq!(alloc.unused_bytes(), 768 * (1023 - i) as u64);
+        });
+
+    assert_eq!(alloc.allocation_count(), 0);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 0);
+    assert_eq!(alloc.unused_bytes(), 0);
 }
