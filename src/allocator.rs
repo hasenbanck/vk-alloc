@@ -229,7 +229,9 @@ impl Allocator {
             let mut block = memory_pool
                 .blocks
                 .remove(allocation.block_key)
-                .ok_or(AllocatorError::UnknownMemoryLocation)?;
+                .ok_or_else(|| {
+                    AllocatorError::Internal("can't find block key in block slotmap".to_owned())
+                })?;
             block.destroy(&self.device);
         }
 

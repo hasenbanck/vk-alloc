@@ -7,8 +7,6 @@ pub enum AllocatorError {
     OutOfMemory,
     /// Failed to map the memory.
     FailedToMap,
-    /// Can't find the memory block or chunk.
-    UnknownMemoryLocation,
     /// No free slots ara available.
     NotSlotsAvailable,
     /// No compatible memory type was found.
@@ -36,9 +34,6 @@ impl std::fmt::Display for AllocatorError {
             }
             AllocatorError::InvalidAlignment => {
                 write!(f, "alignment is not a power of 2")
-            }
-            AllocatorError::UnknownMemoryLocation => {
-                write!(f, "can't find the memory block or chunk")
             }
             AllocatorError::Internal(message) => {
                 write!(f, "{}", message)
