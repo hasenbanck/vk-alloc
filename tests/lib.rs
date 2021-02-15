@@ -331,3 +331,5 @@ fn allocator_allocation_256() {
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
 }
+
+// TODO write complex allocation / de-alloction pattern tests

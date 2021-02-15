@@ -17,6 +17,8 @@ tracing = { version = "0.1", default-features = false, features = ["std", "max_l
 profiling = { version = "0.1", optional = true }
 
 [features]
+vk-buffer-device-address = []
+vk-dedicated-allocation = []
 profile-with-puffin = ["profiling/profile-with-puffin"]
 profile-with-optick = ["profiling/profile-with-optick"]
 profile-with-superluminal = ["profiling/profile-with-superluminal"]

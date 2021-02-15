@@ -2,7 +2,9 @@
 
 use std::ffi::c_void;
 
-use ash::version::{DeviceV1_1, InstanceV1_0};
+#[cfg(feature = "vk-dedicated-allocation")]
+use ash::version::DeviceV1_1;
+use ash::version::InstanceV1_0;
 use ash::vk;
 use slotmap::{new_key_type, SlotMap};
 #[cfg(feature = "tracing")]
@@ -90,12 +92,12 @@ impl Allocator {
         }
     }
 
-    // TODO move me behind a feature
     /// Allocates memory for a buffer.
     ///
-    /// Required the following extensions:
+    /// Required the following Vulkan extensions:
     ///  - VK_KHR_get_memory_requirements2
     ///  - VK_KHR_dedicated_allocation
+    #[cfg(feature = "vk-dedicated-allocation")]
     pub fn allocate_memory_for_buffer(
         &mut self,
         buffer: vk::Buffer,
@@ -126,12 +128,12 @@ impl Allocator {
         self.allocate(&alloc_decs)
     }
 
-    // TODO move me behind a feature
     /// Allocates memory for an image.
     ///
-    /// Required the following extensions:
+    /// Required the following Vulkan extensions:
     ///  - VK_KHR_get_memory_requirements2
     ///  - VK_KHR_dedicated_allocation
+    #[cfg(feature = "vk-dedicated-allocation")]
     pub fn allocate_memory_for_image(
         &mut self,
         image: vk::Image,
@@ -162,22 +164,21 @@ impl Allocator {
         self.allocate(&alloc_decs)
     }
 
-    /// Allocates memory on the general allocator of at least the given size.
-    ///
-    /// For each memory type we have two memory pools: For linear and for optimal textures.
-    /// This removes the need to check for the granularity between them (1k on my 2080s) and
-    /// the idea is, that buffers/textures have different lifetimes and internal fragmentation
-    /// is smaller this way.
-    ///
-    /// Dedicated blocks still exists in their respective pools. They are de-allocated when
-    /// they are freed. Normal blocks are not de-allocated.
-    ///
-    /// Each pool has fixed sized blocks that need to be of power two size. Each block has at
-    /// least one chunk.
-    ///
-    /// Free chunks are saved in a segregated list with buckets of power of two sizes.
-    ///
-    /// The biggest bucket size is the block size.
+    /// Allocates memory on the general allocator.
+    //
+    // For each memory type we have two memory pools: For linear and for optimal textures.
+    // This removes the need to check for the granularity between them and the idea is, that
+    // buffers/textures have different lifetimes and internal fragmentation is smaller this way.
+    //
+    // Dedicated blocks still exists in their respective pools. They are de-allocated when
+    // they are freed. Normal blocks are not de-allocated.
+    //
+    // Each pool has fixed sized blocks that need to be of power two size. Each block has at
+    // least one chunk.
+    //
+    // Free chunks are saved in a segregated list with buckets of power of two sizes.
+    //
+    // The biggest bucket size is the block size.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn allocate(&mut self, descriptor: &AllocationDescriptor) -> Result<Allocation> {
         let size = descriptor.requirements.size;
