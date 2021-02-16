@@ -113,7 +113,7 @@ pub trait AllocatorStatistic {
 /// Type of the allocation.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AllocationType {
-    /// A allocation for a buffer.
+    /// An allocation for a buffer.
     Buffer,
     /// An allocation for a regular image.
     OptimalImage,

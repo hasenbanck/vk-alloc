@@ -32,7 +32,7 @@ pub struct Allocator {
 }
 
 impl Allocator {
-    /// Creates a new general purpose allocator.
+    /// Creates a new allocator.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn new(
         instance: &ash::Instance,
@@ -167,7 +167,7 @@ impl Allocator {
 
     /// Allocates memory on the allocator.
     //
-    // For each memory type we have two memory pools: For linear and for optimal textures.
+    // For each memory type we have two memory pools: For linear resources and for optimal textures.
     // This removes the need to check for the granularity between them and the idea is, that
     // buffers/textures have different lifetimes and internal fragmentation is smaller this way.
     //
@@ -335,11 +335,10 @@ impl AllocatorStatistic for Allocator {
     }
 }
 
-/// Describes the configuration of a `Allocator`.
+/// Describes the configuration of an `Allocator`.
 #[derive(Debug, Clone)]
 pub struct AllocatorDescriptor {
-    /// The size of the blocks that are allocated. Needs to be a power of 2 in bytes. Default: 64 MiB.
-    /// Calculate: x = log2(Size in bytes). 26 = log2(67108864)
+    /// The size of the blocks that are allocated. Defined as log2(size in bytes). Default: 64 MiB.
     pub block_size: u8,
 }
 
@@ -408,6 +407,7 @@ struct BestFitCandidate {
 }
 
 /// A managed memory region of a specific memory type.
+///
 /// Used to separate buffer (linear) and texture (optimal) memory regions,
 /// so that internal memory fragmentation is kept low.
 struct MemoryPool {

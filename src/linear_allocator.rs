@@ -14,7 +14,9 @@ use crate::{
     AllocationType, AllocatorError, AllocatorStatistic, MemoryBlock, MemoryUsage, Result,
 };
 
-/// A linear memory allocator. Memory is allocated by simply allocating new memory at the end
+/// A linear memory allocator.
+///
+/// Memory is allocated by simply allocating new memory at the end
 /// of an allocated memory block. The whole memory has to be freed at once. Needs to be created for
 /// a specific memory location. Heap can only grow as the initially specified block size.
 pub struct LinearAllocator {
@@ -87,9 +89,11 @@ impl LinearAllocator {
         })
     }
 
-    /// Allocates some memory on the linear allocator. Memory location and requirements have to be
-    /// defined at the creation of the linear allocator. If the allocator has not enough space left
-    /// for the allocation, it will fail with an `OutOfMemory` error.
+    /// Allocates some memory on the linear allocator.
+    ///
+    /// Memory location and requirements have to be defined at the creation of the linear allocator.
+    /// If the allocator has not enough space left for the allocation, it will fail with an
+    /// `OutOfMemory` error.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn allocate(
         &mut self,
@@ -150,6 +154,7 @@ impl LinearAllocator {
     }
 
     /// Resets the end of the heap back to the start of the memory allocation.
+    ///
     /// All previously `Allocation` will get invalid after this. Accessing them afterward is
     /// undefined behavior.
     #[cfg_attr(feature = "profiling", profiling::function)]
@@ -199,8 +204,7 @@ impl AllocatorStatistic for LinearAllocator {
 pub struct LinearAllocatorDescriptor {
     /// Location where the memory allocation should be stored. Default: CpuToGpu
     pub location: MemoryUsage,
-    /// The size of the blocks that are allocated. Needs to be a power of 2 in bytes. Default: 64 MiB.
-    /// Calculate: x = log2(Size in bytes). 26 = log2(67108864)
+    /// The size of the blocks that are allocated. Defined as log2(size in bytes). Default: 64 MiB.
     pub block_size: u8,
 }
 
