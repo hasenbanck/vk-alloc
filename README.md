@@ -17,13 +17,10 @@ All features are optional by default.
 
 * `tracing` Adds logging using [tracing](https://github.com/tokio-rs/tracing).
 * `profiling` Adds support for [profiling](https://github.com/aclysma/profiling).
-* `vk-buffer-device-address`: Enables the usage of "vkGetBufferDeviceAddress". Either needs the "
-  VK_KHR_buffer_device_address" extension loaded or the
-  "bufferDeviceAddress" device feature enabled.
+* `vk-buffer-device-address`: Enables the usage of "vkGetBufferDeviceAddress". Either needs the
+  "VK_KHR_buffer_device_address" extension loaded or the "bufferDeviceAddress" device feature enabled.
 * `vk-dedicated-allocation`: Activates helper functions that decide if an allocation should get it's own dedicated
-  memory block. Needs the
-  "VK_KHR_dedicated_allocation" and "VK_KHR_get_memory_requirements2"
-  extensions enabled.
+  memory block. Needs the "VK_KHR_dedicated_allocation" and "VK_KHR_get_memory_requirements2" extensions enabled.
 
 ## License
 
