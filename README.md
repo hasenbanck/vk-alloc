@@ -9,7 +9,7 @@ Currently targets [ash](https://github.com/MaikKlein/ash).
 
 ## Status
 
-Under heavy development. Not usable yet.
+Crate has test cases, but hasn't been tested in production yet. Consider this crate unstable for now.
 
 ## Features
 

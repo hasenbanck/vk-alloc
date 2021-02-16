@@ -29,6 +29,7 @@ pub struct Allocator {
     device: ash::Device,
     buffer_pools: Vec<MemoryPool>,
     image_pools: Vec<MemoryPool>,
+    block_size: u64,
     memory_types_size: u32,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
 }
@@ -53,13 +54,15 @@ impl Allocator {
 
         let memory_types_size = memory_types.len() as u32;
 
+        let block_size = (2u64).pow(descriptor.block_size as u32);
+
         let buffer_pools = memory_types
             .iter()
             .enumerate()
             .map(|(i, memory_type)| {
                 MemoryPool::new(
                     i as u32,
-                    (2u64).pow(descriptor.block_size as u32),
+                    block_size,
                     i,
                     memory_type
                         .property_flags
@@ -87,6 +90,7 @@ impl Allocator {
             device: logical_device.clone(),
             buffer_pools,
             image_pools,
+            block_size,
             memory_types_size,
             memory_properties,
         }
@@ -206,7 +210,7 @@ impl Allocator {
             AllocationType::OptimalImage => &mut self.image_pools[memory_type_index],
         };
 
-        if descriptor.is_dedicated {
+        if descriptor.is_dedicated || size >= self.block_size {
             pool.allocate_dedicated(&self.device, size)
         } else {
             pool.allocate(&self.device, size, alignment)
@@ -225,6 +229,7 @@ impl Allocator {
         if let Some(chunk_key) = allocation.chunk_key {
             memory_pool.free(chunk_key)?;
         } else {
+            // Dedicated block
             let mut block = memory_pool
                 .blocks
                 .remove(allocation.block_key)
@@ -268,8 +273,20 @@ impl AllocatorStatistic for Allocator {
             .flat_map(|buffer| &buffer.chunks)
             .filter(|(_, chunk)| !chunk.is_free)
             .count();
+        let dedicated_buffer_count = self
+            .buffer_pools
+            .iter()
+            .flat_map(|pool| &pool.blocks)
+            .filter(|(_, block)| block.is_dedicated)
+            .count();
+        let dedicated_image_count = self
+            .image_pools
+            .iter()
+            .flat_map(|pool| &pool.blocks)
+            .filter(|(_, block)| block.is_dedicated)
+            .count();
 
-        buffer_count + image_count
+        buffer_count + image_count + dedicated_buffer_count + dedicated_image_count
     }
 
     fn unused_range_count(&self) -> usize {
@@ -291,8 +308,22 @@ impl AllocatorStatistic for Allocator {
             .filter(|(_, chunk)| !chunk.is_free)
             .map(|(_, chunk)| chunk.size)
             .sum();
+        let dedicated_buffer_bytes: u64 = self
+            .buffer_pools
+            .iter()
+            .flat_map(|buffer| &buffer.blocks)
+            .filter(|(_, block)| block.is_dedicated)
+            .map(|(_, chunk)| chunk.size)
+            .sum();
+        let dedicated_image_bytes: u64 = self
+            .image_pools
+            .iter()
+            .flat_map(|buffer| &buffer.blocks)
+            .filter(|(_, block)| block.is_dedicated)
+            .map(|(_, chunk)| chunk.size)
+            .sum();
 
-        buffer_bytes + image_bytes
+        buffer_bytes + image_bytes + dedicated_buffer_bytes + dedicated_image_bytes
     }
 
     fn unused_bytes(&self) -> u64 {
@@ -379,7 +410,6 @@ struct BestFitCandidate {
     free_size: u64,
 }
 
-// TODO benchmark me
 /// A managed memory region of a specific memory type.
 /// Used to separate buffer (linear) and texture (optimal) memory regions,
 /// so that internal memory fragmentation is kept low.
@@ -431,7 +461,7 @@ impl MemoryPool {
     }
 
     fn allocate_dedicated(&mut self, device: &ash::Device, size: u64) -> Result<Allocation> {
-        let block = MemoryBlock::new(device, size, self.memory_type_index, self.is_mappable)?;
+        let block = MemoryBlock::new(device, size, self.memory_type_index, self.is_mappable, true)?;
 
         let device_memory = block.device_memory;
         let mapped_ptr = std::ptr::NonNull::new(block.mapped_ptr);
@@ -558,6 +588,7 @@ impl MemoryPool {
             self.block_size,
             self.memory_type_index,
             self.is_mappable,
+            false,
         )?;
         let block_key = self.blocks.insert(block);
         let chunk_key = self.chunks.insert(MemoryChunk {

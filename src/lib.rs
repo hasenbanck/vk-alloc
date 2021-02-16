@@ -149,6 +149,7 @@ struct MemoryBlock {
     device_memory: vk::DeviceMemory,
     size: u64,
     mapped_ptr: *mut c_void,
+    is_dedicated: bool,
 }
 
 impl MemoryBlock {
@@ -158,6 +159,7 @@ impl MemoryBlock {
         size: u64,
         memory_type_index: usize,
         is_mappable: bool,
+        is_dedicated: bool,
     ) -> Result<Self> {
         let device_memory = {
             let alloc_info = vk::MemoryAllocateInfo::builder()
@@ -198,6 +200,7 @@ impl MemoryBlock {
             device_memory,
             size,
             mapped_ptr,
+            is_dedicated,
         })
     }
 

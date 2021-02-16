@@ -64,7 +64,8 @@ impl LinearAllocator {
             .property_flags
             .contains(vk::MemoryPropertyFlags::HOST_VISIBLE);
 
-        let memory_block = MemoryBlock::new(logical_device, size, memory_type_index, is_mappable)?;
+        let memory_block =
+            MemoryBlock::new(logical_device, size, memory_type_index, is_mappable, false)?;
 
         let physical_device_properties =
             unsafe { instance.get_physical_device_properties(physical_device) };

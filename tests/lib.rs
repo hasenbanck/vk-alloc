@@ -49,7 +49,7 @@ fn linear_allocator_allocation_1024() {
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
             location: MemoryUsage::CpuToGpu,
-            block_size: 20, // 1 MB
+            block_size: 20, // 1 MiB
         },
     )
     .unwrap();
@@ -88,7 +88,7 @@ fn linear_allocator_allocation_256() {
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
             location: MemoryUsage::CpuToGpu,
-            block_size: 20, // 1 MB
+            block_size: 20, // 1 MiB
         },
     )
     .unwrap();
@@ -127,7 +127,7 @@ fn linear_allocator_allocation_granularity() {
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
             location: MemoryUsage::CpuToGpu,
-            block_size: 20, // 1 MB
+            block_size: 20, // 1 MiB
         },
     )
     .unwrap();
@@ -174,7 +174,7 @@ fn linear_allocator_allocation_oom() {
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
             location: MemoryUsage::CpuToGpu,
-            block_size: 20, // 1 MB
+            block_size: 20, // 1 MiB
         },
     )
     .unwrap();
@@ -196,7 +196,7 @@ fn allocator_simple_free() {
         &ctx.instance,
         ctx.physical_device,
         &ctx.logical_device,
-        &AllocatorDescriptor { block_size: 20 }, // 1 MB
+        &AllocatorDescriptor { block_size: 20 }, // 1 MiB
     );
 
     let allocation = alloc
@@ -230,7 +230,7 @@ fn allocator_allocation_1024() {
         &ctx.instance,
         ctx.physical_device,
         &ctx.logical_device,
-        &AllocatorDescriptor { block_size: 20 }, // 1 MB
+        &AllocatorDescriptor { block_size: 20 }, // 1 MiB
     );
 
     let mut allocations: Vec<Allocation> = (0..1024)
@@ -283,7 +283,7 @@ fn allocator_allocation_256() {
         &ctx.instance,
         ctx.physical_device,
         &ctx.logical_device,
-        &AllocatorDescriptor { block_size: 20 }, // 1 MB
+        &AllocatorDescriptor { block_size: 20 }, // 1 MiB
     );
 
     let mut allocations: Vec<Allocation> = (0..1024)
@@ -339,7 +339,7 @@ fn allocator_reverse_free() {
         &ctx.instance,
         ctx.physical_device,
         &ctx.logical_device,
-        &AllocatorDescriptor { block_size: 20 }, // 1 MB
+        &AllocatorDescriptor { block_size: 20 }, // 1 MiB
     );
 
     let mut allocations: Vec<Allocation> = (0..1024)
@@ -387,6 +387,100 @@ fn allocator_reverse_free() {
             assert_eq!(alloc.unused_range_count(), 1023 - i);
             assert_eq!(alloc.unused_bytes(), 768 * (1023 - i) as u64);
         });
+
+    assert_eq!(alloc.allocation_count(), 0);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 0);
+    assert_eq!(alloc.unused_bytes(), 0);
+}
+
+#[test]
+fn allocator_free_every_second_time() {
+    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
+    let mut alloc = Allocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &ctx.logical_device,
+        &AllocatorDescriptor { block_size: 20 }, // 1 MiB
+    );
+
+    let allocations: Vec<Allocation> = (0..1024)
+        .into_iter()
+        .map(|_| {
+            let allocation = alloc
+                .allocate(&AllocationDescriptor {
+                    location: MemoryUsage::GpuOnly,
+                    requirements: vk::MemoryRequirements::builder()
+                        .alignment(1024)
+                        .size(1024)
+                        .memory_type_bits(u32::MAX)
+                        .build(),
+                    allocation_type: AllocationType::Buffer,
+                    is_dedicated: false,
+                })
+                .unwrap();
+            allocation
+        })
+        .collect();
+
+    let mut odd: Vec<Allocation> = allocations
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| index % 2 == 0)
+        .map(|(_, allocation)| allocation.clone())
+        .collect();
+    let mut even: Vec<Allocation> = allocations
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| index % 2 == 1)
+        .map(|(_, allocation)| allocation.clone())
+        .collect();
+
+    odd.drain(..).for_each(|allocation| {
+        alloc.free(allocation).unwrap();
+    });
+
+    even.drain(..).for_each(|allocation| {
+        alloc.free(allocation).unwrap();
+    });
+
+    assert_eq!(alloc.allocation_count(), 0);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 0);
+    assert_eq!(alloc.unused_bytes(), 0);
+}
+
+#[test]
+fn allocator_allocation_dedicated() {
+    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
+    let mut alloc = Allocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &ctx.logical_device,
+        &AllocatorDescriptor { block_size: 20 }, // 1 MiB
+    );
+
+    let allocation = alloc
+        .allocate(&AllocationDescriptor {
+            location: MemoryUsage::GpuOnly,
+            requirements: vk::MemoryRequirements::builder()
+                .alignment(512)
+                .size(10 * 1024 * 1024) // 10 MiB
+                .memory_type_bits(u32::MAX)
+                .build(),
+            allocation_type: AllocationType::Buffer,
+            is_dedicated: false,
+        })
+        .unwrap();
+    assert_eq!(allocation.size(), 10 * 1024 * 1024);
+    assert_eq!(allocation.offset(), 0);
+
+    assert_eq!(alloc.allocation_count(), 1);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 10 * 1024 * 1024);
+    assert_eq!(alloc.unused_bytes(), 0);
+
+    alloc.free(allocation).unwrap();
 
     assert_eq!(alloc.allocation_count(), 0);
     assert_eq!(alloc.unused_range_count(), 0);
