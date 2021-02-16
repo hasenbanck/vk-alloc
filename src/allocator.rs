@@ -575,10 +575,10 @@ impl MemoryPool {
     }
 
     fn free(&mut self, chunk_key: ChunkKey) -> Result<()> {
-        let (size, previous_key, next_key) = {
+        let (previous_key, next_key) = {
             let chunk = &mut self.chunks[chunk_key];
             chunk.is_free = true;
-            (chunk.size, chunk.previous, chunk.next)
+            (chunk.previous, chunk.next)
         };
 
         if let Some(next_key) = next_key {
@@ -591,13 +591,14 @@ impl MemoryPool {
 
         if let Some(previous_key) = previous_key {
             if self.chunks[previous_key].is_free {
+                is_chunk_merged = true;
                 self.merge_rhs_into_lhs_chunk(previous_key, chunk_key, false)?;
-                is_chunk_merged = true
             }
         }
 
         if !is_chunk_merged {
-            let chunk_bucket_index = calculate_bucket_index(size);
+            let chunk = &mut self.chunks[chunk_key];
+            let chunk_bucket_index = calculate_bucket_index(chunk.size);
             self.free_chunks[chunk_bucket_index as usize].push(chunk_key);
         }
 
@@ -645,7 +646,7 @@ impl MemoryPool {
                     "can't find chunk key in expected free list bucket".to_owned(),
                 )
             })?;
-        self.free_chunks.remove(free_list_index);
+        self.free_chunks[bucket_index as usize].remove(free_list_index);
         Ok(())
     }
 }

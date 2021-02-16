@@ -332,4 +332,64 @@ fn allocator_allocation_256() {
     assert_eq!(alloc.unused_bytes(), 0);
 }
 
-// TODO write complex allocation / de-alloction pattern tests
+#[test]
+fn allocator_reverse_free() {
+    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
+    let mut alloc = Allocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &ctx.logical_device,
+        &AllocatorDescriptor { block_size: 20 }, // 1 MB
+    );
+
+    let mut allocations: Vec<Allocation> = (0..1024)
+        .into_iter()
+        .map(|i| {
+            let allocation = alloc
+                .allocate(&AllocationDescriptor {
+                    location: MemoryUsage::GpuOnly,
+                    requirements: vk::MemoryRequirements::builder()
+                        .alignment(1024)
+                        .size(256)
+                        .memory_type_bits(u32::MAX)
+                        .build(),
+                    allocation_type: AllocationType::Buffer,
+                    is_dedicated: false,
+                })
+                .unwrap();
+            assert_eq!(allocation.size(), 256);
+            assert_eq!(allocation.offset(), i * 1024);
+
+            allocation
+        })
+        .collect();
+
+    assert_eq!(alloc.allocation_count(), 1024);
+    assert_eq!(alloc.unused_range_count(), 1023);
+    assert_eq!(alloc.used_bytes(), 256 * 1024);
+    assert_eq!(alloc.unused_bytes(), 768 * 1023);
+
+    allocations
+        .drain(..)
+        .rev()
+        .enumerate()
+        .for_each(|(i, allocation)| {
+            assert_eq!(
+                allocation.offset(),
+                ((1024 * 1024) - ((i + 1) * 1024)) as u64
+            );
+
+            alloc.free(allocation).unwrap();
+
+            assert_eq!(alloc.allocation_count(), 1023 - i);
+            assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as u64);
+            // sic! We free from the front. The padding is part of the next chunk.
+            assert_eq!(alloc.unused_range_count(), 1023 - i);
+            assert_eq!(alloc.unused_bytes(), 768 * (1023 - i) as u64);
+        });
+
+    assert_eq!(alloc.allocation_count(), 0);
+    assert_eq!(alloc.unused_range_count(), 0);
+    assert_eq!(alloc.used_bytes(), 0);
+    assert_eq!(alloc.unused_bytes(), 0);
+}

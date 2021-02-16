@@ -5,7 +5,7 @@ use ash::extensions::ext;
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
 use ash::vk;
 #[cfg(feature = "tracing")]
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info};
 
 static INIT: Once = Once::new();
 
