@@ -89,7 +89,7 @@ impl LinearAllocator {
 
     /// Allocates some memory on the linear allocator. Memory location and requirements have to be
     /// defined at the creation of the linear allocator. If the allocator has not enough space left
-    /// for the allocation, it will fail with an "OutOfMemory" error.
+    /// for the allocation, it will fail with an `OutOfMemory` error.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn allocate(
         &mut self,

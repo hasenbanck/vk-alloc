@@ -21,10 +21,7 @@ use crate::{AllocationInfo, MemoryBlock};
 // For a minimal bucket size of 256b as log2.
 const MINIMAL_BUCKET_SIZE_LOG2: u32 = 8;
 
-/// The general purpose memory allocator. Implemented as a free list allocator.
-///
-/// Does save data that is too big for a memory block or marked as dedicated into a dedicated
-/// GPU memory block. Handles the selection of the right memory type for the user.
+/// The general purpose memory allocator. Implemented as a segregated list allocator.
 pub struct Allocator {
     device: ash::Device,
     buffer_pools: Vec<MemoryPool>,
@@ -168,7 +165,7 @@ impl Allocator {
         self.allocate(&alloc_decs)
     }
 
-    /// Allocates memory on the general allocator.
+    /// Allocates memory on the allocator.
     //
     // For each memory type we have two memory pools: For linear and for optimal textures.
     // This removes the need to check for the granularity between them and the idea is, that
@@ -352,7 +349,7 @@ impl Default for AllocatorDescriptor {
     }
 }
 
-/// The descriptor for an allocation on the general allocator.
+/// The descriptor for an allocation on the allocator.
 #[derive(Debug, Clone)]
 pub struct AllocationDescriptor {
     /// Location where the memory allocation should be stored.
