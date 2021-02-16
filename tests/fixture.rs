@@ -316,10 +316,10 @@ unsafe extern "system" fn debug_utils_callback(
 
     match message_severity {
         vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => {
-            error!("{} - {:?}", ty, message)
+            panic!("{} - {:?}", ty, message)
         }
         vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => {
-            warn!("{} - {:?}", ty, message)
+            panic!("{} - {:?}", ty, message)
         }
         vk::DebugUtilsMessageSeverityFlagsEXT::INFO => {
             info!("{} - {:?}", ty, message)
@@ -328,7 +328,7 @@ unsafe extern "system" fn debug_utils_callback(
             debug!("{} - {:?}", ty, message)
         }
         _ => {
-            warn!("{} - {:?}", ty, message);
+            panic!("{} - {:?}", ty, message);
         }
     }
 

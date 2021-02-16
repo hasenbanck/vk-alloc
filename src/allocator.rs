@@ -177,7 +177,6 @@ impl Allocator {
     // least one chunk.
     //
     // Free chunks are saved in a segregated list with buckets of power of two sizes.
-    //
     // The biggest bucket size is the block size.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn allocate(&mut self, descriptor: &AllocationDescriptor) -> Result<Allocation> {
