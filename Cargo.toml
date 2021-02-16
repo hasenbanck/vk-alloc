@@ -13,7 +13,7 @@ edition = "2018"
 [dependencies]
 ash = "0.31"
 slotmap = "1.0"
-tracing = { version = "0.1", default-features = false, features = ["std", "max_level_trace", "release_max_level_info"], optional = true }
+tracing = { version = "0.1", default-features = false, optional = true }
 profiling = { version = "0.1", optional = true }
 
 [features]
