@@ -1,5 +1,4 @@
 use std::ffi::CStr;
-use std::sync::Once;
 
 use ash::extensions::ext;
 use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
@@ -7,18 +6,17 @@ use ash::vk;
 #[cfg(feature = "tracing")]
 use tracing::{debug, info};
 
-static INIT: Once = Once::new();
+#[cfg(feature = "tracing")]
+pub fn initialize_logging() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
 
-pub fn initialize() {
     INIT.call_once(|| {
-        #[cfg(feature = "tracing")]
-        {
-            use tracing_subscriber::filter::EnvFilter;
+        use tracing_subscriber::filter::EnvFilter;
 
-            let filter =
-                EnvFilter::from_default_env().add_directive("lib::fixture=WARN".parse().unwrap());
-            tracing_subscriber::fmt().with_env_filter(filter).init();
-        }
+        let filter =
+            EnvFilter::from_default_env().add_directive("lib::fixture=WARN".parse().unwrap());
+        tracing_subscriber::fmt().with_env_filter(filter).init();
     });
 }
 
@@ -56,7 +54,8 @@ impl Drop for VulkanContext {
 
 impl VulkanContext {
     pub fn new(api_version: u32) -> Self {
-        initialize();
+        #[cfg(feature = "tracing")]
+        initialize_logging();
 
         let entry = ash::Entry::new().unwrap();
 
