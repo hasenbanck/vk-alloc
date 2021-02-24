@@ -5,14 +5,7 @@
 ![MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Apache](https://img.shields.io/badge/license-Apache-blue.svg)
 
-A collection of Vulkan memory allocators written in Rust.
-
-Currently has two allocators:
-
-* A linear allocator.
-* A segregated list allocator.
-
-The segregated list allocator is supposed to be used as an general purpose allocator under Vulkan.
+A segregated list allocator for Vulkan written in Rust.
 
 Currently targets [ash](https://github.com/MaikKlein/ash).
 
