@@ -1,6 +1,6 @@
 [package]
 name = "vk-alloc"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Nils Hasenbanck <nils@hasenbanck.de>"]
 description = "A collection of Vulkan memory allocators."
 license = "MIT OR Apache-2.0"

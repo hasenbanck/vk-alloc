@@ -146,7 +146,7 @@ impl LinearAllocator {
         );
 
         Ok(LinearAllocation {
-            device_memory: Default::default(),
+            device_memory: self.memory_block.device_memory,
             offset,
             size: descriptor.size,
             mapped_ptr: std::ptr::NonNull::new(self.memory_block.mapped_ptr),
