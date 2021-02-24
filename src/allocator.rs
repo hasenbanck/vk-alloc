@@ -14,7 +14,7 @@ use tracing::debug;
 use crate::debug_memory_types;
 use crate::{
     align_up, find_memory_type_index, AllocationType, AllocatorError, AllocatorStatistic,
-    MemoryUsage, Result,
+    MemoryLocation, Result,
 };
 use crate::{AllocationInfo, MemoryBlock};
 
@@ -102,7 +102,7 @@ impl Allocator {
     pub fn allocate_memory_for_buffer(
         &mut self,
         buffer: vk::Buffer,
-        location: MemoryUsage,
+        location: MemoryLocation,
     ) -> Result<Allocation> {
         let info = vk::BufferMemoryRequirementsInfo2::builder().buffer(buffer);
         let mut dedicated_requirements = vk::MemoryDedicatedRequirements::builder();
@@ -138,7 +138,7 @@ impl Allocator {
     pub fn allocate_memory_for_image(
         &mut self,
         image: vk::Image,
-        location: MemoryUsage,
+        location: MemoryLocation,
     ) -> Result<Allocation> {
         let info = vk::ImageMemoryRequirementsInfo2::builder().image(image);
         let mut dedicated_requirements = vk::MemoryDedicatedRequirements::builder();
@@ -216,7 +216,7 @@ impl Allocator {
 
     /// Frees the allocation.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn free(&mut self, allocation: Allocation) -> Result<()> {
+    pub fn free(&mut self, allocation: &Allocation) -> Result<()> {
         let memory_pool = if allocation.pool_index > self.memory_types_size {
             &mut self.image_pools[(allocation.pool_index - self.memory_types_size) as usize]
         } else {
@@ -238,10 +238,10 @@ impl Allocator {
 
         Ok(())
     }
-}
 
-impl Drop for Allocator {
-    fn drop(&mut self) {
+    /// Releases all memory blocks back to the system. All allocations will become invalid.
+    #[cfg_attr(feature = "profiling", profiling::function)]
+    pub fn free_all(&mut self) {
         let device = self.device.clone();
         self.buffer_pools.iter_mut().for_each(|pool| {
             pool.blocks
@@ -253,6 +253,12 @@ impl Drop for Allocator {
                 .iter_mut()
                 .for_each(|(_, block)| block.destroy(&device))
         });
+    }
+}
+
+impl Drop for Allocator {
+    fn drop(&mut self) {
+        self.free_all();
     }
 }
 
@@ -352,7 +358,7 @@ impl Default for AllocatorDescriptor {
 #[derive(Debug, Clone)]
 pub struct AllocationDescriptor {
     /// Location where the memory allocation should be stored.
-    pub location: MemoryUsage,
+    pub location: MemoryLocation,
     /// Vulkan memory requirements for an allocation.
     pub requirements: vk::MemoryRequirements,
     /// The type of the allocation.

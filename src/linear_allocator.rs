@@ -11,9 +11,13 @@ use tracing::{debug, trace, warn};
 use crate::debug_memory_types;
 use crate::{
     align_up, find_memory_type_index, has_granularity_conflict, is_on_same_page, AllocationInfo,
-    AllocationType, AllocatorError, AllocatorStatistic, MemoryBlock, MemoryUsage, Result,
+    AllocationType, AllocatorError, AllocatorStatistic, MemoryBlock, MemoryLocation, Result,
 };
 
+#[deprecated(
+    since = "0.2.0",
+    note = "This allocator isn't really useful. A linear allocator is more useful when implemented by the application directly."
+)]
 /// A linear memory allocator.
 ///
 /// Memory is allocated by simply allocating new memory at the end
@@ -203,7 +207,7 @@ impl AllocatorStatistic for LinearAllocator {
 #[derive(Debug, Clone)]
 pub struct LinearAllocatorDescriptor {
     /// Location where the memory allocation should be stored. Default: CpuToGpu
-    pub location: MemoryUsage,
+    pub location: MemoryLocation,
     /// The size of the blocks that are allocated. Defined as log2(size in bytes). Default: 64 MiB.
     pub block_size: u8,
 }
@@ -211,7 +215,7 @@ pub struct LinearAllocatorDescriptor {
 impl Default for LinearAllocatorDescriptor {
     fn default() -> Self {
         Self {
-            location: MemoryUsage::CpuToGpu,
+            location: MemoryLocation::CpuToGpu,
             block_size: 26,
         }
     }

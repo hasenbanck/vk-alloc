@@ -3,7 +3,7 @@ use ash::vk;
 use vk_alloc::{
     Allocation, AllocationDescriptor, AllocationInfo, AllocationType, Allocator,
     AllocatorDescriptor, AllocatorError, AllocatorStatistic, LinearAllocationDescriptor,
-    LinearAllocator, LinearAllocatorDescriptor, MemoryUsage,
+    LinearAllocator, LinearAllocatorDescriptor, MemoryLocation,
 };
 
 pub mod fixture;
@@ -48,7 +48,7 @@ fn linear_allocator_allocation_1024() {
         ctx.physical_device,
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
-            location: MemoryUsage::CpuToGpu,
+            location: MemoryLocation::CpuToGpu,
             block_size: 20, // 1 MiB
         },
     )
@@ -87,7 +87,7 @@ fn linear_allocator_allocation_256() {
         ctx.physical_device,
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
-            location: MemoryUsage::CpuToGpu,
+            location: MemoryLocation::CpuToGpu,
             block_size: 20, // 1 MiB
         },
     )
@@ -126,7 +126,7 @@ fn linear_allocator_allocation_granularity() {
         ctx.physical_device,
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
-            location: MemoryUsage::CpuToGpu,
+            location: MemoryLocation::CpuToGpu,
             block_size: 20, // 1 MiB
         },
     )
@@ -173,7 +173,7 @@ fn linear_allocator_allocation_oom() {
         ctx.physical_device,
         &ctx.logical_device,
         &LinearAllocatorDescriptor {
-            location: MemoryUsage::CpuToGpu,
+            location: MemoryLocation::CpuToGpu,
             block_size: 20, // 1 MiB
         },
     )
@@ -201,7 +201,7 @@ fn allocator_simple_free() {
 
     let allocation = alloc
         .allocate(&AllocationDescriptor {
-            location: MemoryUsage::GpuOnly,
+            location: MemoryLocation::GpuOnly,
             requirements: vk::MemoryRequirements::builder()
                 .alignment(512)
                 .size(1024)
@@ -215,7 +215,7 @@ fn allocator_simple_free() {
     assert_eq!(allocation.size(), 1024);
     assert_eq!(allocation.offset(), 0);
 
-    alloc.free(allocation).unwrap();
+    alloc.free(&allocation).unwrap();
 
     assert_eq!(alloc.allocation_count(), 0);
     assert_eq!(alloc.unused_range_count(), 0);
@@ -238,7 +238,7 @@ fn allocator_allocation_1024() {
         .map(|i| {
             let allocation = alloc
                 .allocate(&AllocationDescriptor {
-                    location: MemoryUsage::GpuOnly,
+                    location: MemoryLocation::GpuOnly,
                     requirements: vk::MemoryRequirements::builder()
                         .alignment(512)
                         .size(1024)
@@ -264,7 +264,7 @@ fn allocator_allocation_1024() {
         .drain(..)
         .enumerate()
         .for_each(|(i, allocation)| {
-            alloc.free(allocation).unwrap();
+            alloc.free(&allocation).unwrap();
 
             assert_eq!(alloc.allocation_count(), (1023 - i));
             assert_eq!(alloc.used_bytes(), 1024 * (1023 - i) as u64);
@@ -291,7 +291,7 @@ fn allocator_allocation_256() {
         .map(|i| {
             let allocation = alloc
                 .allocate(&AllocationDescriptor {
-                    location: MemoryUsage::GpuOnly,
+                    location: MemoryLocation::GpuOnly,
                     requirements: vk::MemoryRequirements::builder()
                         .alignment(1024)
                         .size(256)
@@ -317,7 +317,7 @@ fn allocator_allocation_256() {
         .drain(..)
         .enumerate()
         .for_each(|(i, allocation)| {
-            alloc.free(allocation).unwrap();
+            alloc.free(&allocation).unwrap();
 
             assert_eq!(alloc.allocation_count(), 1023 - i);
             assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as u64);
@@ -347,7 +347,7 @@ fn allocator_reverse_free() {
         .map(|i| {
             let allocation = alloc
                 .allocate(&AllocationDescriptor {
-                    location: MemoryUsage::GpuOnly,
+                    location: MemoryLocation::GpuOnly,
                     requirements: vk::MemoryRequirements::builder()
                         .alignment(1024)
                         .size(256)
@@ -379,7 +379,7 @@ fn allocator_reverse_free() {
                 ((1024 * 1024) - ((i + 1) * 1024)) as u64
             );
 
-            alloc.free(allocation).unwrap();
+            alloc.free(&allocation).unwrap();
 
             assert_eq!(alloc.allocation_count(), 1023 - i);
             assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as u64);
@@ -409,7 +409,7 @@ fn allocator_free_every_second_time() {
         .map(|_| {
             let allocation = alloc
                 .allocate(&AllocationDescriptor {
-                    location: MemoryUsage::GpuOnly,
+                    location: MemoryLocation::GpuOnly,
                     requirements: vk::MemoryRequirements::builder()
                         .alignment(1024)
                         .size(1024)
@@ -437,11 +437,11 @@ fn allocator_free_every_second_time() {
         .collect();
 
     odd.drain(..).for_each(|allocation| {
-        alloc.free(allocation).unwrap();
+        alloc.free(&allocation).unwrap();
     });
 
     even.drain(..).for_each(|allocation| {
-        alloc.free(allocation).unwrap();
+        alloc.free(&allocation).unwrap();
     });
 
     assert_eq!(alloc.allocation_count(), 0);
@@ -462,7 +462,7 @@ fn allocator_allocation_dedicated() {
 
     let allocation = alloc
         .allocate(&AllocationDescriptor {
-            location: MemoryUsage::GpuOnly,
+            location: MemoryLocation::GpuOnly,
             requirements: vk::MemoryRequirements::builder()
                 .alignment(512)
                 .size(10 * 1024 * 1024) // 10 MiB
@@ -480,7 +480,7 @@ fn allocator_allocation_dedicated() {
     assert_eq!(alloc.used_bytes(), 10 * 1024 * 1024);
     assert_eq!(alloc.unused_bytes(), 0);
 
-    alloc.free(allocation).unwrap();
+    alloc.free(&allocation).unwrap();
 
     assert_eq!(alloc.allocation_count(), 0);
     assert_eq!(alloc.unused_range_count(), 0);
