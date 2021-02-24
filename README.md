@@ -5,7 +5,7 @@
 ![MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Apache](https://img.shields.io/badge/license-Apache-blue.svg)
 
-A segregated list allocator for Vulkan written in Rust.
+A segregated list allocator memory for Vulkan written in Rust.
 
 Currently targets [ash](https://github.com/MaikKlein/ash).
 

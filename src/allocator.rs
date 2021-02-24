@@ -243,12 +243,12 @@ impl Allocator {
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn free_all(&mut self) {
         let device = self.device.clone();
-        self.buffer_pools.iter_mut().for_each(|pool| {
+        self.buffer_pools.drain(..).for_each(|mut pool| {
             pool.blocks
                 .iter_mut()
                 .for_each(|(_, block)| block.destroy(&device))
         });
-        self.image_pools.iter_mut().for_each(|pool| {
+        self.image_pools.drain(..).for_each(|mut pool| {
             pool.blocks
                 .iter_mut()
                 .for_each(|(_, block)| block.destroy(&device))

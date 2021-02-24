@@ -210,6 +210,7 @@ impl MemoryBlock {
             unsafe { device.unmap_memory(self.device_memory) };
         }
         unsafe { device.free_memory(self.device_memory, None) };
+        self.device_memory = vk::DeviceMemory::null()
     }
 }
 
