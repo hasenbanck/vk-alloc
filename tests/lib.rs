@@ -1,9 +1,8 @@
 use ash::vk;
 
 use vk_alloc::{
-    Allocation, AllocationDescriptor, AllocationInfo, AllocationType, Allocator,
-    AllocatorDescriptor, AllocatorError, AllocatorStatistic, LinearAllocationDescriptor,
-    LinearAllocator, LinearAllocatorDescriptor, MemoryLocation,
+    Allocation, AllocationDescriptor, AllocationType, Allocator, AllocatorDescriptor,
+    MemoryLocation,
 };
 
 pub mod fixture;
@@ -24,169 +23,6 @@ fn allocator_creation() {
             ..Default::default()
         },
     );
-}
-
-#[test]
-fn linear_allocator_creation() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
-    LinearAllocator::new(
-        &ctx.instance,
-        ctx.physical_device,
-        &ctx.logical_device,
-        &LinearAllocatorDescriptor {
-            ..Default::default()
-        },
-    )
-    .unwrap();
-}
-
-#[test]
-fn linear_allocator_allocation_1024() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
-    let mut alloc = LinearAllocator::new(
-        &ctx.instance,
-        ctx.physical_device,
-        &ctx.logical_device,
-        &LinearAllocatorDescriptor {
-            location: MemoryLocation::CpuToGpu,
-            block_size: 20, // 1 MiB
-        },
-    )
-    .unwrap();
-
-    for i in 0..1024 {
-        let allocation = alloc
-            .allocate(&LinearAllocationDescriptor {
-                size: 1024,
-                alignment: 512,
-                allocation_type: AllocationType::Buffer,
-            })
-            .unwrap();
-        assert_eq!(allocation.size(), 1024);
-        assert_eq!(allocation.offset(), i * 1024);
-    }
-
-    assert_eq!(alloc.allocation_count(), 1024);
-    assert_eq!(alloc.unused_range_count(), 0);
-    assert_eq!(alloc.used_bytes(), 1024 * 1024);
-    assert_eq!(alloc.unused_bytes(), 0);
-
-    alloc.free();
-
-    assert_eq!(alloc.allocation_count(), 0);
-    assert_eq!(alloc.unused_range_count(), 0);
-    assert_eq!(alloc.used_bytes(), 0);
-    assert_eq!(alloc.unused_bytes(), 0);
-}
-
-#[test]
-fn linear_allocator_allocation_256() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
-    let mut alloc = LinearAllocator::new(
-        &ctx.instance,
-        ctx.physical_device,
-        &ctx.logical_device,
-        &LinearAllocatorDescriptor {
-            location: MemoryLocation::CpuToGpu,
-            block_size: 20, // 1 MiB
-        },
-    )
-    .unwrap();
-
-    for i in 0..1024 {
-        let allocation = alloc
-            .allocate(&LinearAllocationDescriptor {
-                size: 256,
-                alignment: 1024,
-                allocation_type: AllocationType::Buffer,
-            })
-            .unwrap();
-        assert_eq!(allocation.size(), 256);
-        assert_eq!(allocation.offset(), i * 1024);
-    }
-
-    assert_eq!(alloc.allocation_count(), 1024);
-    assert_eq!(alloc.unused_range_count(), 1023);
-    assert_eq!(alloc.used_bytes(), 1024 * 256);
-    assert_eq!(alloc.unused_bytes(), 1023 * 768);
-
-    alloc.free();
-
-    assert_eq!(alloc.allocation_count(), 0);
-    assert_eq!(alloc.unused_range_count(), 0);
-    assert_eq!(alloc.used_bytes(), 0);
-    assert_eq!(alloc.unused_bytes(), 0);
-}
-
-#[test]
-fn linear_allocator_allocation_granularity() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
-    let mut alloc = LinearAllocator::new(
-        &ctx.instance,
-        ctx.physical_device,
-        &ctx.logical_device,
-        &LinearAllocatorDescriptor {
-            location: MemoryLocation::CpuToGpu,
-            block_size: 20, // 1 MiB
-        },
-    )
-    .unwrap();
-
-    let allocation = alloc
-        .allocate(&LinearAllocationDescriptor {
-            size: 256,
-            alignment: 256,
-            allocation_type: AllocationType::Buffer,
-        })
-        .unwrap();
-    assert_eq!(allocation.size(), 256);
-    assert_eq!(allocation.offset(), 0);
-
-    let allocation = alloc
-        .allocate(&LinearAllocationDescriptor {
-            size: 256,
-            alignment: 256,
-            allocation_type: AllocationType::OptimalImage,
-        })
-        .unwrap();
-    assert_eq!(allocation.size(), 256);
-    assert_eq!(allocation.offset(), ctx.buffer_image_granularity);
-
-    assert_eq!(alloc.allocation_count(), 2);
-    assert_eq!(alloc.unused_range_count(), 1);
-    assert_eq!(alloc.used_bytes(), 2 * 256);
-    assert_eq!(alloc.unused_bytes(), 768);
-
-    alloc.free();
-
-    assert_eq!(alloc.allocation_count(), 0);
-    assert_eq!(alloc.unused_range_count(), 0);
-    assert_eq!(alloc.used_bytes(), 0);
-    assert_eq!(alloc.unused_bytes(), 0);
-}
-
-#[test]
-fn linear_allocator_allocation_oom() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 0, 0));
-    let mut alloc = LinearAllocator::new(
-        &ctx.instance,
-        ctx.physical_device,
-        &ctx.logical_device,
-        &LinearAllocatorDescriptor {
-            location: MemoryLocation::CpuToGpu,
-            block_size: 20, // 1 MiB
-        },
-    )
-    .unwrap();
-
-    let allocation = alloc.allocate(&LinearAllocationDescriptor {
-        size: 1050000,
-        alignment: 256,
-        allocation_type: AllocationType::Buffer,
-    });
-
-    assert!(allocation.is_err());
-    assert_eq!(AllocatorError::OutOfMemory, allocation.err().unwrap());
 }
 
 #[test]
@@ -212,8 +48,8 @@ fn allocator_simple_free() {
         })
         .unwrap();
 
-    assert_eq!(allocation.size(), 1024);
-    assert_eq!(allocation.offset(), 0);
+    assert_eq!(allocation.size, 1024);
+    assert_eq!(allocation.offset, 0);
 
     alloc.free(&allocation).unwrap();
 
@@ -248,8 +84,8 @@ fn allocator_allocation_1024() {
                     is_dedicated: false,
                 })
                 .unwrap();
-            assert_eq!(allocation.size(), 1024);
-            assert_eq!(allocation.offset(), i * 1024);
+            assert_eq!(allocation.size, 1024);
+            assert_eq!(allocation.offset, i * 1024);
 
             allocation
         })
@@ -301,8 +137,8 @@ fn allocator_allocation_256() {
                     is_dedicated: false,
                 })
                 .unwrap();
-            assert_eq!(allocation.size(), 256);
-            assert_eq!(allocation.offset(), i * 1024);
+            assert_eq!(allocation.size, 256);
+            assert_eq!(allocation.offset, i * 1024);
 
             allocation
         })
@@ -357,8 +193,8 @@ fn allocator_reverse_free() {
                     is_dedicated: false,
                 })
                 .unwrap();
-            assert_eq!(allocation.size(), 256);
-            assert_eq!(allocation.offset(), i * 1024);
+            assert_eq!(allocation.size, 256);
+            assert_eq!(allocation.offset, i * 1024);
 
             allocation
         })
@@ -374,10 +210,7 @@ fn allocator_reverse_free() {
         .rev()
         .enumerate()
         .for_each(|(i, allocation)| {
-            assert_eq!(
-                allocation.offset(),
-                ((1024 * 1024) - ((i + 1) * 1024)) as u64
-            );
+            assert_eq!(allocation.offset, ((1024 * 1024) - ((i + 1) * 1024)) as u64);
 
             alloc.free(&allocation).unwrap();
 
@@ -472,8 +305,8 @@ fn allocator_allocation_dedicated() {
             is_dedicated: false,
         })
         .unwrap();
-    assert_eq!(allocation.size(), 10 * 1024 * 1024);
-    assert_eq!(allocation.offset(), 0);
+    assert_eq!(allocation.size, 10 * 1024 * 1024);
+    assert_eq!(allocation.offset, 0);
 
     assert_eq!(alloc.allocation_count(), 1);
     assert_eq!(alloc.unused_range_count(), 0);
