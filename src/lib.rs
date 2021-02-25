@@ -1,9 +1,7 @@
 //! A collection of Vulkan memory allocators.
 use std::ffi::c_void;
 
-#[cfg(feature = "vk-dedicated-allocation")]
-use ash::version::DeviceV1_1;
-use ash::version::{DeviceV1_0, InstanceV1_0};
+use ash::version::{DeviceV1_0, DeviceV1_1, InstanceV1_0, InstanceV1_1};
 use ash::vk;
 use slotmap::{new_key_type, SlotMap};
 #[cfg(feature = "tracing")]
@@ -34,6 +32,8 @@ impl Default for AllocatorDescriptor {
 /// The general purpose memory allocator. Implemented as a segregated list allocator.
 pub struct Allocator {
     device: ash::Device,
+    driver_id: vk::DriverId,
+    is_integrated: bool,
     buffer_pools: Vec<MemoryPool>,
     image_pools: Vec<MemoryPool>,
     block_size: u64,
@@ -50,6 +50,11 @@ impl Allocator {
         logical_device: &ash::Device,
         descriptor: &AllocatorDescriptor,
     ) -> Self {
+        let (driver_id, is_integrated) = query_driver(instance, physical_device);
+
+        #[cfg(feature = "tracing")]
+        debug!("Driver ID of the physical device: {:?}", driver_id);
+
         let memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
 
@@ -95,6 +100,8 @@ impl Allocator {
 
         Self {
             device: logical_device.clone(),
+            driver_id,
+            is_integrated,
             buffer_pools,
             image_pools,
             block_size,
@@ -104,11 +111,6 @@ impl Allocator {
     }
 
     /// Allocates memory for a buffer.
-    ///
-    /// Required the following Vulkan extensions:
-    ///  - VK_KHR_get_memory_requirements2
-    ///  - VK_KHR_dedicated_allocation
-    #[cfg(feature = "vk-dedicated-allocation")]
     pub fn allocate_memory_for_buffer(
         &mut self,
         buffer: vk::Buffer,
@@ -140,11 +142,6 @@ impl Allocator {
     }
 
     /// Allocates memory for an image.
-    ///
-    /// Required the following Vulkan extensions:
-    ///  - VK_KHR_get_memory_requirements2
-    ///  - VK_KHR_dedicated_allocation
-    #[cfg(feature = "vk-dedicated-allocation")]
     pub fn allocate_memory_for_image(
         &mut self,
         image: vk::Image,
@@ -204,8 +201,7 @@ impl Allocator {
             return Err(AllocatorError::InvalidAlignment);
         }
 
-        let memory_type_index = find_memory_type_index(
-            &self.memory_properties,
+        let memory_type_index = self.find_memory_type_index(
             descriptor.location,
             descriptor.requirements.memory_type_bits,
         )?;
@@ -222,6 +218,93 @@ impl Allocator {
         } else {
             pool.allocate(&self.device, size, alignment)
         }
+    }
+
+    fn find_memory_type_index(
+        &self,
+        location: MemoryLocation,
+        memory_type_bits: u32,
+    ) -> Result<usize> {
+        // AMD APU main memory heap is NOT DEVICE_LOCAL.
+        let memory_property_flags = if (self.driver_id == vk::DriverId::AMD_OPEN_SOURCE
+            || self.driver_id == vk::DriverId::AMD_PROPRIETARY
+            || self.driver_id == vk::DriverId::MESA_RADV)
+            && self.is_integrated
+        {
+            match location {
+                MemoryLocation::GpuOnly => {
+                    vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+                }
+                MemoryLocation::CpuToGpu => {
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL
+                        | vk::MemoryPropertyFlags::HOST_VISIBLE
+                        | vk::MemoryPropertyFlags::HOST_COHERENT
+                }
+                MemoryLocation::GpuToCpu => {
+                    vk::MemoryPropertyFlags::HOST_VISIBLE
+                        | vk::MemoryPropertyFlags::HOST_COHERENT
+                        | vk::MemoryPropertyFlags::HOST_CACHED
+                }
+            }
+        } else {
+            match location {
+                MemoryLocation::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                MemoryLocation::CpuToGpu => {
+                    vk::MemoryPropertyFlags::DEVICE_LOCAL
+                        | vk::MemoryPropertyFlags::HOST_VISIBLE
+                        | vk::MemoryPropertyFlags::HOST_COHERENT
+                }
+                MemoryLocation::GpuToCpu => {
+                    vk::MemoryPropertyFlags::HOST_VISIBLE
+                        | vk::MemoryPropertyFlags::HOST_COHERENT
+                        | vk::MemoryPropertyFlags::HOST_CACHED
+                }
+            }
+        };
+
+        let memory_type_index_optional =
+            self.query_memory_type_index(memory_type_bits, memory_property_flags);
+
+        if let Some(index) = memory_type_index_optional {
+            return Ok(index as usize);
+        }
+
+        // Fallback for drivers that don't expose BAR (Base Address Register).
+        let memory_property_flags = match location {
+            MemoryLocation::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            MemoryLocation::CpuToGpu => {
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
+            }
+            MemoryLocation::GpuToCpu => {
+                vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT
+                    | vk::MemoryPropertyFlags::HOST_CACHED
+            }
+        };
+
+        let memory_type_index_optional =
+            self.query_memory_type_index(memory_type_bits, memory_property_flags);
+
+        match memory_type_index_optional {
+            Some(index) => Ok(index as usize),
+            None => Err(AllocatorError::NoCompatibleMemoryTypeFound),
+        }
+    }
+
+    fn query_memory_type_index(
+        &self,
+        memory_type_bits: u32,
+        memory_property_flags: vk::MemoryPropertyFlags,
+    ) -> Option<u32> {
+        let memory_properties = &self.memory_properties;
+        memory_properties.memory_types[..memory_properties.memory_type_count as usize]
+            .iter()
+            .enumerate()
+            .find(|(index, memory_type)| {
+                memory_type_is_compatible(*index, memory_type_bits)
+                    && memory_type.property_flags.contains(memory_property_flags)
+            })
+            .map(|(index, _)| index as u32)
     }
 
     /// Frees the allocation.
@@ -808,64 +891,21 @@ fn align_up(offset: u64, alignment: u64) -> u64 {
     (offset + (alignment - 1u64)) & !(alignment - 1u64)
 }
 
-fn find_memory_type_index(
-    memory_properties: &vk::PhysicalDeviceMemoryProperties,
-    location: MemoryLocation,
-    memory_type_bits: u32,
-) -> Result<usize> {
-    // Prefer fast path memory when doing transfers between host and device.
-    let memory_property_flags = match location {
-        MemoryLocation::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        MemoryLocation::CpuToGpu => {
-            vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_COHERENT
-                | vk::MemoryPropertyFlags::DEVICE_LOCAL
-        }
-        MemoryLocation::GpuToCpu => {
-            vk::MemoryPropertyFlags::HOST_VISIBLE
-                | vk::MemoryPropertyFlags::HOST_COHERENT
-                | vk::MemoryPropertyFlags::HOST_CACHED
-        }
+fn query_driver(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+) -> (vk::DriverId, bool) {
+    let mut vulkan_12_properties = vk::PhysicalDeviceVulkan12Properties::default();
+    let mut physical_device_properties =
+        vk::PhysicalDeviceProperties2::builder().push_next(&mut vulkan_12_properties);
+
+    unsafe {
+        instance.get_physical_device_properties2(physical_device, &mut physical_device_properties)
     };
+    let is_integrated =
+        physical_device_properties.properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU;
 
-    let mut memory_type_index_optional =
-        query_memory_type_index(memory_properties, memory_type_bits, memory_property_flags);
-
-    // Lose memory requirements if no fast path is found.
-    if memory_type_index_optional.is_none() {
-        let memory_property_flags = match location {
-            MemoryLocation::GpuOnly => vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            MemoryLocation::CpuToGpu => {
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-            }
-            MemoryLocation::GpuToCpu => {
-                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT
-            }
-        };
-
-        memory_type_index_optional =
-            query_memory_type_index(memory_properties, memory_type_bits, memory_property_flags);
-    }
-
-    match memory_type_index_optional {
-        Some(x) => Ok(x as usize),
-        None => Err(AllocatorError::NoCompatibleMemoryTypeFound),
-    }
-}
-
-fn query_memory_type_index(
-    memory_properties: &vk::PhysicalDeviceMemoryProperties,
-    memory_type_bits: u32,
-    memory_property_flags: vk::MemoryPropertyFlags,
-) -> Option<u32> {
-    memory_properties.memory_types[..memory_properties.memory_type_count as usize]
-        .iter()
-        .enumerate()
-        .find(|(index, memory_type)| {
-            memory_type_is_compatible(*index, memory_type_bits)
-                && memory_type.property_flags.contains(memory_property_flags)
-        })
-        .map(|(index, _)| index as u32)
+    (vulkan_12_properties.driver_id, is_integrated)
 }
 
 #[inline]
