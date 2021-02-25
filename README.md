@@ -19,8 +19,8 @@ All features are optional by default.
 
 * `tracing` Adds logging using [tracing](https://github.com/tokio-rs/tracing).
 * `profiling` Adds support for [profiling](https://github.com/aclysma/profiling).
-* `vk-buffer-device-address`: Enables the usage of "vkGetBufferDeviceAddress". Either needs the
-  "VK_KHR_buffer_device_address" extension loaded or the "bufferDeviceAddress" device feature enabled.
+* `vk-buffer-device-address`: Enables the usage of "vkGetBufferDeviceAddress". Either needs the the
+  Vulkan 1.2 feature "bufferDeviceAddress" device feature enabled.
 
 ## License
 
