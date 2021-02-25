@@ -5,7 +5,7 @@ use ash::version::{DeviceV1_0, DeviceV1_1, InstanceV1_0, InstanceV1_1};
 use ash::vk;
 use slotmap::{new_key_type, SlotMap};
 #[cfg(feature = "tracing")]
-use tracing::debug;
+use tracing::{debug, info};
 
 pub use error::AllocatorError;
 
@@ -62,7 +62,7 @@ impl Allocator {
             &memory_properties.memory_types[..memory_properties.memory_type_count as usize];
 
         #[cfg(feature = "tracing")]
-        debug_memory_types(memory_properties, memory_types);
+        print_memory_types(memory_properties, memory_types);
 
         let memory_types_size = memory_types.len() as u32;
 
@@ -914,32 +914,27 @@ fn memory_type_is_compatible(memory_type_index: usize, memory_type_bits: u32) ->
 }
 
 #[cfg(feature = "tracing")]
-fn debug_memory_types(
+fn print_memory_types(
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     memory_types: &[vk::MemoryType],
 ) {
-    debug!("Memory heaps:");
-    for i in 0..memory_properties.memory_heap_count as usize {
-        if memory_properties.memory_heaps[i].flags == vk::MemoryHeapFlags::DEVICE_LOCAL {
-            debug!(
-                "HEAP[{}] device local [y] size: {} MiB",
-                i,
-                memory_properties.memory_heaps[i].size / (1024 * 1024)
-            );
-        } else {
-            debug!(
-                "HEAP[{}] device local [n] size: {} MiB",
-                i,
-                memory_properties.memory_heaps[i].size / (1024 * 1024)
-            );
-        }
-    }
-    debug!("Memory types:");
-    for (i, memory_type) in memory_types.iter().enumerate() {
-        debug!(
-            "Memory type[{}] on HEAP[{}] property flags: {:?}",
-            i, memory_type.heap_index, memory_type.property_flags
+    info!("Physical device memory heaps:");
+    for heap_index in 0..memory_properties.memory_heap_count {
+        info!(
+            "Heap {}: {:?}",
+            heap_index, memory_properties.memory_heaps[heap_index as usize].flags
         );
+        info!(
+            "\tSize = {} MiB",
+            memory_properties.memory_heaps[heap_index as usize].size / (1024 * 1024)
+        );
+        for (type_index, memory_type) in memory_types
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.heap_index == heap_index)
+        {
+            info!("\tType {}: {:?}", type_index, memory_type.property_flags);
+        }
     }
 }
 
