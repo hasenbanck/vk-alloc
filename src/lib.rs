@@ -216,13 +216,13 @@ impl Allocator {
         if descriptor.is_dedicated || size >= self.block_size {
             #[cfg(feature = "tracing")]
             debug!(
-                "Allocating as dedicated block on memory_type {}",
+                "Allocating as dedicated block on memory type {}",
                 memory_type_index
             );
             pool.allocate_dedicated(&self.device, size)
         } else {
             #[cfg(feature = "tracing")]
-            debug!("Sub allocating on memory_type {}", memory_type_index);
+            debug!("Sub allocating on memory type {}", memory_type_index);
             pool.allocate(&self.device, size, alignment)
         }
     }
@@ -458,11 +458,11 @@ pub enum AllocationType {
 /// The intended location of the memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemoryLocation {
-    /// Mainly used for uploading data to the GPU (DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT).
+    /// Mainly used for uploading data to the GPU.
     CpuToGpu,
-    /// Used as fast access memory for the GPU (DEVICE_LOCAL).
+    /// Used as fast access memory for the GPU.
     GpuOnly,
-    /// Mainly used for downloading data from the GPU (HOST_VISIBLE | HOST_COHERENT | HOST_CACHED).
+    /// Mainly used for downloading data from the GPU.
     GpuToCpu,
 }
 
