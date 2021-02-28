@@ -214,8 +214,15 @@ impl Allocator {
         };
 
         if descriptor.is_dedicated || size >= self.block_size {
+            #[cfg(feature = "tracing")]
+            debug!(
+                "Allocating as dedicated block on memory_type {}",
+                memory_type_index
+            );
             pool.allocate_dedicated(&self.device, size)
         } else {
+            #[cfg(feature = "tracing")]
+            debug!("Sub allocating on memory_type {}", memory_type_index);
             pool.allocate(&self.device, size, alignment)
         }
     }
