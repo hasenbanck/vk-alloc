@@ -7,7 +7,7 @@
 
 A segregated list memory allocator for Vulkan written in Rust.
 
-Currently targets Vulkan 1.2+ using [ash](https://github.com/MaikKlein/ash).
+Targets Vulkan 1.2+ using [erupt](https://gitlab.com/Friz64/erupt).
 
 ## Status
 
@@ -21,6 +21,11 @@ All features are optional by default.
 * `profiling` Adds support for [profiling](https://github.com/aclysma/profiling).
 * `vk-buffer-device-address`: Enables the usage of "vkGetBufferDeviceAddress". Either needs the the
   Vulkan 1.2 feature "bufferDeviceAddress" device feature enabled.
+
+## Older versions
+
+Up until version 0.3.0 this allocator supported ash. With 0.4.0 I switched to erupt. If you want to
+continue using ash, please stay on the 0.3.0 release. It might get minor bugfixes if needed.
 
 ## License
 

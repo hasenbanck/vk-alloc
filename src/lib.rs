@@ -1,8 +1,8 @@
 //! A collection of Vulkan memory allocators.
 use std::ffi::c_void;
+use std::ptr;
 
-use ash::version::{DeviceV1_0, DeviceV1_1, InstanceV1_0, InstanceV1_1};
-use ash::vk;
+use erupt::{vk, ExtendableFrom};
 use slotmap::{new_key_type, SlotMap};
 #[cfg(feature = "tracing")]
 use tracing::{debug, info};
@@ -31,7 +31,6 @@ impl Default for AllocatorDescriptor {
 
 /// The general purpose memory allocator. Implemented as a segregated list allocator.
 pub struct Allocator {
-    device: ash::Device,
     driver_id: vk::DriverId,
     is_integrated: bool,
     buffer_pools: Vec<MemoryPool>,
@@ -45,9 +44,8 @@ impl Allocator {
     /// Creates a new allocator.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn new(
-        instance: &ash::Instance,
+        instance: &erupt::InstanceLoader,
         physical_device: vk::PhysicalDevice,
-        logical_device: &ash::Device,
         descriptor: &AllocatorDescriptor,
     ) -> Self {
         let (driver_id, is_integrated) = query_driver(instance, physical_device);
@@ -56,7 +54,7 @@ impl Allocator {
         debug!("Driver ID of the physical device: {:?}", driver_id);
 
         let memory_properties =
-            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+            unsafe { instance.get_physical_device_memory_properties(physical_device, None) };
 
         let memory_types =
             &memory_properties.memory_types[..memory_properties.memory_type_count as usize];
@@ -99,7 +97,6 @@ impl Allocator {
             .collect();
 
         Self {
-            device: logical_device.clone(),
             driver_id,
             is_integrated,
             buffer_pools,
@@ -113,18 +110,17 @@ impl Allocator {
     /// Allocates memory for a buffer.
     pub fn allocate_memory_for_buffer(
         &mut self,
+        device: &erupt::DeviceLoader,
         buffer: vk::Buffer,
         location: MemoryLocation,
     ) -> Result<Allocation> {
-        let info = vk::BufferMemoryRequirementsInfo2::builder().buffer(buffer);
-        let mut dedicated_requirements = vk::MemoryDedicatedRequirements::builder();
-        let mut requirements =
-            vk::MemoryRequirements2::builder().push_next(&mut dedicated_requirements);
+        let info = vk::BufferMemoryRequirementsInfo2Builder::new().buffer(buffer);
+        let mut dedicated_requirements = vk::MemoryDedicatedRequirementsBuilder::new();
+        let requirements =
+            vk::MemoryRequirements2Builder::new().extend_from(&mut dedicated_requirements);
 
-        unsafe {
-            self.device
-                .get_buffer_memory_requirements2(&info, &mut requirements);
-        }
+        let requirements =
+            unsafe { device.get_buffer_memory_requirements2(&info, Some(requirements.build())) };
 
         let memory_requirements = requirements.memory_requirements;
 
@@ -138,24 +134,23 @@ impl Allocator {
             is_dedicated,
         };
 
-        self.allocate(&alloc_decs)
+        self.allocate(device, &alloc_decs)
     }
 
     /// Allocates memory for an image.
     pub fn allocate_memory_for_image(
         &mut self,
+        device: &erupt::DeviceLoader,
         image: vk::Image,
         location: MemoryLocation,
     ) -> Result<Allocation> {
-        let info = vk::ImageMemoryRequirementsInfo2::builder().image(image);
-        let mut dedicated_requirements = vk::MemoryDedicatedRequirements::builder();
-        let mut requirements =
-            vk::MemoryRequirements2::builder().push_next(&mut dedicated_requirements);
+        let info = vk::ImageMemoryRequirementsInfo2Builder::new().image(image);
+        let mut dedicated_requirements = vk::MemoryDedicatedRequirementsBuilder::new();
+        let requirements =
+            vk::MemoryRequirements2Builder::new().extend_from(&mut dedicated_requirements);
 
-        unsafe {
-            self.device
-                .get_image_memory_requirements2(&info, &mut requirements);
-        }
+        let requirements =
+            unsafe { device.get_image_memory_requirements2(&info, Some(requirements.build())) };
 
         let memory_requirements = requirements.memory_requirements;
 
@@ -169,7 +164,7 @@ impl Allocator {
             is_dedicated,
         };
 
-        self.allocate(&alloc_decs)
+        self.allocate(device, &alloc_decs)
     }
 
     /// Allocates memory on the allocator.
@@ -187,7 +182,11 @@ impl Allocator {
     // Free chunks are saved in a segregated list with buckets of power of two sizes.
     // The biggest bucket size is the block size.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn allocate(&mut self, descriptor: &AllocationDescriptor) -> Result<Allocation> {
+    pub fn allocate(
+        &mut self,
+        device: &erupt::DeviceLoader,
+        descriptor: &AllocationDescriptor,
+    ) -> Result<Allocation> {
         let size = descriptor.requirements.size;
         let alignment = descriptor.requirements.alignment;
 
@@ -219,11 +218,11 @@ impl Allocator {
                 "Allocating as dedicated block on memory type {}",
                 memory_type_index
             );
-            pool.allocate_dedicated(&self.device, size)
+            pool.allocate_dedicated(device, size)
         } else {
             #[cfg(feature = "tracing")]
             debug!("Sub allocating on memory type {}", memory_type_index);
-            pool.allocate(&self.device, size, alignment)
+            pool.allocate(device, size, alignment)
         }
     }
 
@@ -316,7 +315,11 @@ impl Allocator {
 
     /// Frees the allocation.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn free(&mut self, allocation: &Allocation) -> Result<()> {
+    pub fn deallocate(
+        &mut self,
+        device: &erupt::DeviceLoader,
+        allocation: &Allocation,
+    ) -> Result<()> {
         let memory_pool = if allocation.pool_index > self.memory_types_size {
             &mut self.image_pools[(allocation.pool_index - self.memory_types_size) as usize]
         } else {
@@ -333,16 +336,15 @@ impl Allocator {
                 .ok_or_else(|| {
                     AllocatorError::Internal("can't find block key in block slotmap".to_owned())
                 })?;
-            block.destroy(&self.device);
+            block.destroy(&device);
         }
 
         Ok(())
     }
 
-    /// Releases all memory blocks back to the system. All allocations will become invalid.
+    /// Releases all memory blocks back to the system. Should be called before drop.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn free_all(&mut self) {
-        let device = self.device.clone();
+    pub fn cleanup(&mut self, device: &erupt::DeviceLoader) {
         self.buffer_pools.drain(..).for_each(|mut pool| {
             pool.blocks
                 .iter_mut()
@@ -438,12 +440,6 @@ impl Allocator {
     }
 }
 
-impl Drop for Allocator {
-    fn drop(&mut self) {
-        self.free_all();
-    }
-}
-
 /// Type of the allocation.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AllocationType {
@@ -485,9 +481,9 @@ pub struct Allocation {
     pool_index: u32,
     block_key: BlockKey,
     chunk_key: Option<ChunkKey>,
-    /// The `vk::DeviceMemory` of the allocation. Managed by the allocator.
+    /// The `DeviceMemory` of the allocation. Managed by the allocator.
     pub device_memory: vk::DeviceMemory,
-    /// The offset inside the `vk::DeviceMemory`.
+    /// The offset inside the `DeviceMemory`.
     pub offset: u64,
     /// The size of the allocation.
     pub size: u64,
@@ -589,7 +585,11 @@ impl MemoryPool {
         }
     }
 
-    fn allocate_dedicated(&mut self, device: &ash::Device, size: u64) -> Result<Allocation> {
+    fn allocate_dedicated(
+        &mut self,
+        device: &erupt::DeviceLoader,
+        size: u64,
+    ) -> Result<Allocation> {
         let block = MemoryBlock::new(device, size, self.memory_type_index, self.is_mappable, true)?;
 
         let device_memory = block.device_memory;
@@ -606,7 +606,12 @@ impl MemoryPool {
         })
     }
 
-    fn allocate(&mut self, device: &ash::Device, size: u64, alignment: u64) -> Result<Allocation> {
+    fn allocate(
+        &mut self,
+        device: &erupt::DeviceLoader,
+        size: u64,
+        alignment: u64,
+    ) -> Result<Allocation> {
         let mut bucket_index = calculate_bucket_index(size);
 
         // Make sure that we don't try to allocate a chunk bigger than the block.
@@ -711,7 +716,7 @@ impl MemoryPool {
         }
     }
 
-    fn allocate_new_block(&mut self, device: &ash::Device) -> Result<()> {
+    fn allocate_new_block(&mut self, device: &erupt::DeviceLoader) -> Result<()> {
         let block = MemoryBlock::new(
             device,
             self.block_size,
@@ -834,46 +839,46 @@ struct MemoryBlock {
 impl MemoryBlock {
     #[cfg_attr(feature = "profiling", profiling::function)]
     fn new(
-        device: &ash::Device,
+        device: &erupt::DeviceLoader,
         size: u64,
         memory_type_index: usize,
         is_mappable: bool,
         is_dedicated: bool,
     ) -> Result<Self> {
         let device_memory = {
-            let alloc_info = vk::MemoryAllocateInfo::builder()
+            let alloc_info = vk::MemoryAllocateInfoBuilder::new()
                 .allocation_size(size)
                 .memory_type_index(memory_type_index as u32);
 
             let allocation_flags = vk::MemoryAllocateFlags::DEVICE_ADDRESS;
-            let mut flags_info = vk::MemoryAllocateFlagsInfo::builder().flags(allocation_flags);
+            let mut flags_info = vk::MemoryAllocateFlagsInfoBuilder::new().flags(allocation_flags);
 
             let alloc_info = if cfg!(features = "vk-buffer-device-address") {
-                alloc_info.push_next(&mut flags_info)
+                alloc_info.extend_from(&mut flags_info)
             } else {
                 alloc_info
             };
 
-            unsafe { device.allocate_memory(&alloc_info, None) }
-                .map_err(|_| AllocatorError::OutOfMemory)?
+            let res = unsafe { device.allocate_memory(&alloc_info, None, None) };
+            if res.is_err() {
+                return Err(AllocatorError::OutOfMemory);
+            }
+
+            res.unwrap()
         };
 
-        let mapped_ptr = if is_mappable {
+        let mut mapped_ptr: *mut c_void = ptr::null_mut();
+        if is_mappable {
             unsafe {
-                device.map_memory(
-                    device_memory,
-                    0,
-                    vk::WHOLE_SIZE,
-                    vk::MemoryMapFlags::empty(),
-                )
+                if device
+                    .map_memory(device_memory, 0, vk::WHOLE_SIZE, None, &mut mapped_ptr)
+                    .is_err()
+                {
+                    device.free_memory(Some(device_memory), None);
+                    return Err(AllocatorError::FailedToMap);
+                }
             }
-            .map_err(|_| {
-                unsafe { device.free_memory(device_memory, None) };
-                AllocatorError::FailedToMap
-            })?
-        } else {
-            std::ptr::null_mut()
-        };
+        }
 
         Ok(Self {
             device_memory,
@@ -884,11 +889,11 @@ impl MemoryBlock {
     }
 
     #[cfg_attr(feature = "profiling", profiling::function)]
-    fn destroy(&mut self, device: &ash::Device) {
+    fn destroy(&mut self, device: &erupt::DeviceLoader) {
         if !self.mapped_ptr.is_null() {
             unsafe { device.unmap_memory(self.device_memory) };
         }
-        unsafe { device.free_memory(self.device_memory, None) };
+        unsafe { device.free_memory(Some(self.device_memory), None) };
         self.device_memory = vk::DeviceMemory::null()
     }
 }
@@ -899,15 +904,18 @@ fn align_up(offset: u64, alignment: u64) -> u64 {
 }
 
 fn query_driver(
-    instance: &ash::Instance,
+    instance: &erupt::InstanceLoader,
     physical_device: vk::PhysicalDevice,
 ) -> (vk::DriverId, bool) {
     let mut vulkan_12_properties = vk::PhysicalDeviceVulkan12Properties::default();
-    let mut physical_device_properties =
-        vk::PhysicalDeviceProperties2::builder().push_next(&mut vulkan_12_properties);
+    let physical_device_properties =
+        vk::PhysicalDeviceProperties2Builder::new().extend_from(&mut vulkan_12_properties);
 
-    unsafe {
-        instance.get_physical_device_properties2(physical_device, &mut physical_device_properties)
+    let physical_device_properties = unsafe {
+        instance.get_physical_device_properties2(
+            physical_device,
+            Some(physical_device_properties.build()),
+        )
     };
     let is_integrated =
         physical_device_properties.properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU;

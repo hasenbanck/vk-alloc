@@ -1,24 +1,23 @@
 [package]
 name = "vk-alloc"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Nils Hasenbanck <nils@hasenbanck.de>"]
 description = "A segregated list memory allocator for Vulkan."
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/hasenbanck/vk-alloc"
 categories = ["rendering::graphics-api", "rendering"]
-keywords = ["vk", "vulkan", "ash", "allocator", "memory"]
+keywords = ["vk", "vulkan", "erupt", "allocator", "memory"]
 edition = "2018"
 
 [dependencies]
-ash = "0.31"
+erupt = "0.17"
 slotmap = "1.0"
 tracing = { version = "0.1", default-features = false, optional = true }
 profiling = { version = "0.1", optional = true }
 
 [features]
 vk-buffer-device-address = []
-vk-dedicated-allocation = []
 profile-with-puffin = ["profiling/profile-with-puffin"]
 profile-with-optick = ["profiling/profile-with-optick"]
 profile-with-superluminal = ["profiling/profile-with-superluminal"]

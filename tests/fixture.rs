@@ -1,8 +1,7 @@
 use std::ffi::CStr;
+use std::os::raw::c_char;
 
-use ash::extensions::ext;
-use ash::version::{DeviceV1_0, EntryV1_0, InstanceV1_0};
-use ash::vk;
+use erupt::{cstr, vk};
 #[cfg(feature = "tracing")]
 use tracing::{debug, info};
 
@@ -20,21 +19,19 @@ pub fn initialize_logging() {
     });
 }
 
-#[cfg(feature = "tracing")]
-pub struct DebugMessenger {
-    pub ext: ext::DebugUtils,
-    pub callback: vk::DebugUtilsMessengerEXT,
-}
+const LAYER_KHRONOS_VALIDATION: *const c_char = cstr!("VK_LAYER_KHRONOS_validation");
 
 pub struct VulkanContext {
-    _entry: ash::Entry,
-    pub instance: ash::Instance,
+    // The order is important! Or else we will get an exception on drop!
+    #[cfg(feature = "tracing")]
+    debug_messenger: vk::DebugUtilsMessengerEXT,
+    pub logical_device: erupt::DeviceLoader,
+    pub instance: erupt::InstanceLoader,
+    _entry: erupt::DefaultEntryLoader,
+
     pub physical_device: vk::PhysicalDevice,
-    pub logical_device: ash::Device,
     pub queue: vk::Queue,
     pub buffer_image_granularity: u64,
-    #[cfg(feature = "tracing")]
-    debug_messenger: DebugMessenger,
 }
 
 impl Drop for VulkanContext {
@@ -43,9 +40,8 @@ impl Drop for VulkanContext {
             self.logical_device.destroy_device(None);
 
             #[cfg(feature = "tracing")]
-            self.debug_messenger
-                .ext
-                .destroy_debug_utils_messenger(self.debug_messenger.callback, None);
+            self.instance
+                .destroy_debug_utils_messenger_ext(Some(self.debug_messenger), None);
 
             self.instance.destroy_instance(None);
         };
@@ -57,12 +53,12 @@ impl VulkanContext {
         #[cfg(feature = "tracing")]
         initialize_logging();
 
-        let entry = ash::Entry::new().unwrap();
+        let entry = erupt::EntryLoader::new().unwrap();
 
-        let engine_name = std::ffi::CString::new("ash").unwrap();
+        let engine_name = std::ffi::CString::new("erupt").unwrap();
         let app_name = std::ffi::CString::new("vk-alloc").unwrap();
 
-        let app_info = vk::ApplicationInfo::builder()
+        let app_info = vk::ApplicationInfoBuilder::new()
             .application_name(&app_name)
             .application_version(vk::make_version(0, 1, 0))
             .engine_name(&engine_name)
@@ -75,13 +71,13 @@ impl VulkanContext {
         let (physical_device, logical_device, queue) = Self::request_device(&instance);
 
         let physical_device_properties =
-            unsafe { instance.get_physical_device_properties(physical_device) };
+            unsafe { instance.get_physical_device_properties(physical_device, None) };
 
         let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;
 
         #[cfg(feature = "tracing")]
         {
-            let debug_messenger = Self::create_debug_messenger(&entry, &instance);
+            let debug_messenger = Self::create_debug_messenger(&instance);
             Self {
                 _entry: entry,
                 instance,
@@ -106,91 +102,91 @@ impl VulkanContext {
         }
     }
 
-    fn create_instance_extensions(entry: &ash::Entry) -> Vec<&'static CStr> {
-        let instance_extensions = entry.enumerate_instance_extension_properties().unwrap();
+    fn create_instance_extensions(
+        entry: &erupt::DefaultEntryLoader,
+    ) -> Vec<*const std::os::raw::c_char> {
+        let instance_extensions = unsafe {
+            entry
+                .enumerate_instance_extension_properties(None, None)
+                .unwrap()
+        };
 
-        let mut extensions: Vec<&'static CStr> = Vec::new();
+        let mut extensions = Vec::new();
 
-        extensions.push(vk::KhrGetPhysicalDeviceProperties2Fn::name());
-        extensions.push(ext::DebugUtils::name());
+        extensions.push(vk::KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
+        extensions.push(vk::EXT_DEBUG_UTILS_EXTENSION_NAME);
 
-        extensions.retain(|&ext| {
-            let found = instance_extensions
-                .iter()
-                .any(|inst_ext| unsafe { CStr::from_ptr(inst_ext.extension_name.as_ptr()) == ext });
+        extensions.retain(|ext| {
+            let extension = unsafe { CStr::from_ptr(*ext) };
+            let found = instance_extensions.iter().any(|inst_ext| unsafe {
+                CStr::from_ptr(inst_ext.extension_name.as_ptr()) == extension
+            });
             if found {
                 true
             } else {
                 panic!(
                     "Unable to find instance extension: {}",
-                    ext.to_string_lossy()
+                    extension.to_string_lossy()
                 );
             }
         });
         extensions
     }
 
-    fn create_layers(entry: &ash::Entry) -> Vec<&'static CStr> {
-        let instance_layers = entry.enumerate_instance_layer_properties().unwrap();
+    fn create_layers(entry: &erupt::DefaultEntryLoader) -> Vec<*const std::os::raw::c_char> {
+        let instance_layers = unsafe { entry.enumerate_instance_layer_properties(None) }.unwrap();
 
-        let mut layers: Vec<&'static CStr> = Vec::new();
+        let mut layers = Vec::new();
 
-        layers.push(CStr::from_bytes_with_nul(b"VK_LAYER_KHRONOS_validation\0").unwrap());
+        layers.push(LAYER_KHRONOS_VALIDATION);
 
-        layers.retain(|&layer| {
+        layers.retain(|layer| {
+            let instance_layer = unsafe { CStr::from_ptr(*layer) };
             let found = instance_layers.iter().any(|inst_layer| unsafe {
-                CStr::from_ptr(inst_layer.layer_name.as_ptr()) == layer
+                CStr::from_ptr(inst_layer.layer_name.as_ptr()) == instance_layer
             });
             if found {
                 true
             } else {
-                panic!("Unable to find layer: {}", layer.to_string_lossy());
+                panic!("Unable to find layer: {}", instance_layer.to_string_lossy());
             }
         });
         layers
     }
 
     fn create_instance(
-        entry: &ash::Entry,
+        entry: &erupt::DefaultEntryLoader,
         app_info: &vk::ApplicationInfoBuilder,
-        extensions: &[&CStr],
-        layers: &[&CStr],
-    ) -> ash::Instance {
-        let layer_pointers = layers
-            .iter()
-            .chain(extensions.iter())
-            .map(|&s| {
-                // Safe because `layers` and `extensions` entries have static lifetime.
-                s.as_ptr()
-            })
-            .collect::<Vec<_>>();
-
-        let create_info = vk::InstanceCreateInfo::builder()
+        extensions: &[*const c_char],
+        layers: &[*const c_char],
+    ) -> erupt::InstanceLoader {
+        let create_info = vk::InstanceCreateInfoBuilder::new()
             .flags(vk::InstanceCreateFlags::empty())
             .application_info(&app_info)
-            .enabled_layer_names(&layer_pointers[..layers.len()])
-            .enabled_extension_names(&layer_pointers[layers.len()..]);
+            .enabled_layer_names(&layers)
+            .enabled_extension_names(&extensions);
 
-        unsafe { entry.create_instance(&create_info, None).unwrap() }
+        erupt::InstanceLoader::new(&entry, &create_info, None).unwrap()
     }
 
     #[cfg(feature = "tracing")]
-    fn create_debug_messenger(entry: &ash::Entry, instance: &ash::Instance) -> DebugMessenger {
-        let ext = ext::DebugUtils::new(entry, instance);
-        let info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
+    fn create_debug_messenger(instance: &erupt::InstanceLoader) -> vk::DebugUtilsMessengerEXT {
+        let info = vk::DebugUtilsMessengerCreateInfoEXTBuilder::new()
             .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::all())
             .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
             .pfn_user_callback(Some(debug_utils_callback));
-        let callback = unsafe { ext.create_debug_utils_messenger(&info, None) }.unwrap();
-        DebugMessenger { ext, callback }
+
+        unsafe { instance.create_debug_utils_messenger_ext(&info, None, None) }.unwrap()
     }
 
-    fn request_device(instance: &ash::Instance) -> (vk::PhysicalDevice, ash::Device, vk::Queue) {
-        let physical_devices = unsafe { instance.enumerate_physical_devices().unwrap() };
+    fn request_device(
+        instance: &erupt::InstanceLoader,
+    ) -> (vk::PhysicalDevice, erupt::DeviceLoader, vk::Queue) {
+        let physical_devices = unsafe { instance.enumerate_physical_devices(None).unwrap() };
 
         let mut chosen = None;
         for device in physical_devices {
-            let properties = unsafe { instance.get_physical_device_properties(device) };
+            let properties = unsafe { instance.get_physical_device_properties(device, None) };
 
             if properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU
                 || properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU
@@ -206,21 +202,20 @@ impl VulkanContext {
     }
 
     fn create_logical_device(
-        instance: &ash::Instance,
+        instance: &erupt::InstanceLoader,
         physical_device: vk::PhysicalDevice,
-    ) -> (ash::Device, vk::Queue) {
+    ) -> (erupt::DeviceLoader, vk::Queue) {
         let queue_family_properties =
-            unsafe { instance.get_physical_device_queue_family_properties(physical_device) };
+            unsafe { instance.get_physical_device_queue_family_properties(physical_device, None) };
 
         let transfer_queue_family_id =
             Self::find_queue_family(vk::QueueFlags::TRANSFER, &queue_family_properties);
 
-        let queue_infos = [vk::DeviceQueueCreateInfo::builder()
+        let queue_infos = [vk::DeviceQueueCreateInfoBuilder::new()
             .queue_family_index(transfer_queue_family_id)
-            .queue_priorities(&[1.0])
-            .build()];
+            .queue_priorities(&[1.0])];
         let logical_device = Self::create_device(instance, physical_device, &queue_infos);
-        let queue = unsafe { logical_device.get_device_queue(transfer_queue_family_id, 0) };
+        let queue = unsafe { logical_device.get_device_queue(transfer_queue_family_id, 0, None) };
 
         (logical_device, queue)
     }
@@ -248,50 +243,41 @@ impl VulkanContext {
     }
 
     fn create_device(
-        instance: &ash::Instance,
+        instance: &erupt::InstanceLoader,
         physical_device: vk::PhysicalDevice,
-        queue_infos: &[vk::DeviceQueueCreateInfo],
-    ) -> ash::Device {
+        queue_infos: &[vk::DeviceQueueCreateInfoBuilder],
+    ) -> erupt::DeviceLoader {
         let device_extensions = Self::create_device_extensions(instance, physical_device);
 
-        let extension_pointers = device_extensions
-            .iter()
-            .map(|&s| s.as_ptr())
-            .collect::<Vec<_>>();
-
-        let device_create_info = vk::DeviceCreateInfo::builder()
+        let device_create_info = vk::DeviceCreateInfoBuilder::new()
             .queue_create_infos(queue_infos)
-            .enabled_extension_names(&extension_pointers);
+            .enabled_extension_names(&device_extensions);
 
-        unsafe {
-            instance
-                .create_device(physical_device, &device_create_info, None)
-                .unwrap()
-        }
+        erupt::DeviceLoader::new(instance, physical_device, &device_create_info, None).unwrap()
     }
 
     fn create_device_extensions(
-        instance: &ash::Instance,
+        instance: &erupt::InstanceLoader,
         physical_device: vk::PhysicalDevice,
-    ) -> Vec<&'static CStr> {
-        let mut extensions: Vec<&'static CStr> = Vec::new();
+    ) -> Vec<*const c_char> {
+        let mut extensions = Vec::new();
 
-        //extensions.push(ash::extensions::khr::Swapchain::name());
+        let device_extensions =
+            unsafe { instance.enumerate_device_extension_properties(physical_device, None, None) }
+                .unwrap();
 
-        let device_extensions = unsafe {
-            instance
-                .enumerate_device_extension_properties(physical_device)
-                .unwrap()
-        };
-
-        extensions.retain(|&ext| {
-            let found = device_extensions
-                .iter()
-                .any(|inst_ext| unsafe { CStr::from_ptr(inst_ext.extension_name.as_ptr()) == ext });
+        extensions.retain(|ext| {
+            let extension = unsafe { CStr::from_ptr(*ext) };
+            let found = device_extensions.iter().any(|inst_ext| unsafe {
+                CStr::from_ptr(inst_ext.extension_name.as_ptr()) == extension
+            });
             if found {
                 true
             } else {
-                panic!("Unable to find device extension: {}", ext.to_string_lossy());
+                panic!(
+                    "Unable to find device extension: {}",
+                    extension.to_string_lossy()
+                );
             }
         });
 
@@ -301,8 +287,8 @@ impl VulkanContext {
 
 #[cfg(feature = "tracing")]
 unsafe extern "system" fn debug_utils_callback(
-    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    message_severity: vk::DebugUtilsMessageSeverityFlagBitsEXT,
+    message_types: vk::DebugUtilsMessageTypeFlagsEXT,
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
     _p_user_data: *mut std::ffi::c_void,
 ) -> vk::Bool32 {
@@ -311,19 +297,19 @@ unsafe extern "system" fn debug_utils_callback(
     }
 
     let message = CStr::from_ptr((*p_callback_data).p_message);
-    let ty = format!("{:?}", message_type);
+    let ty = format!("{:?}", message_types);
 
     match message_severity {
-        vk::DebugUtilsMessageSeverityFlagsEXT::ERROR => {
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::ERROR_EXT => {
             panic!("{} - {:?}", ty, message)
         }
-        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => {
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::WARNING_EXT => {
             panic!("{} - {:?}", ty, message)
         }
-        vk::DebugUtilsMessageSeverityFlagsEXT::INFO => {
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::INFO_EXT => {
             info!("{} - {:?}", ty, message)
         }
-        vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE => {
+        vk::DebugUtilsMessageSeverityFlagBitsEXT::VERBOSE_EXT => {
             debug!("{} - {:?}", ty, message)
         }
         _ => {

@@ -1,4 +1,4 @@
-use ash::vk;
+use erupt::vk;
 
 use vk_alloc::{
     Allocation, AllocationDescriptor, AllocationType, Allocator, AllocatorDescriptor,
@@ -18,7 +18,6 @@ fn allocator_creation() {
     Allocator::new(
         &ctx.instance,
         ctx.physical_device,
-        &ctx.logical_device,
         &AllocatorDescriptor {
             ..Default::default()
         },
@@ -31,32 +30,36 @@ fn allocator_simple_free() {
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
-        &ctx.logical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
     );
 
     let allocation = alloc
-        .allocate(&AllocationDescriptor {
-            location: MemoryLocation::GpuOnly,
-            requirements: vk::MemoryRequirements::builder()
-                .alignment(512)
-                .size(1024)
-                .memory_type_bits(u32::MAX)
-                .build(),
-            allocation_type: AllocationType::Buffer,
-            is_dedicated: false,
-        })
+        .allocate(
+            &ctx.logical_device,
+            &AllocationDescriptor {
+                location: MemoryLocation::GpuOnly,
+                requirements: vk::MemoryRequirementsBuilder::new()
+                    .alignment(512)
+                    .size(1024)
+                    .memory_type_bits(u32::MAX)
+                    .build(),
+                allocation_type: AllocationType::Buffer,
+                is_dedicated: false,
+            },
+        )
         .unwrap();
 
     assert_eq!(allocation.size, 1024);
     assert_eq!(allocation.offset, 0);
 
-    alloc.free(&allocation).unwrap();
+    alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
 
     assert_eq!(alloc.allocation_count(), 0);
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
+
+    alloc.cleanup(&ctx.logical_device);
 }
 
 #[test]
@@ -65,7 +68,6 @@ fn allocator_allocation_1024() {
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
-        &ctx.logical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
     );
 
@@ -73,16 +75,19 @@ fn allocator_allocation_1024() {
         .into_iter()
         .map(|i| {
             let allocation = alloc
-                .allocate(&AllocationDescriptor {
-                    location: MemoryLocation::GpuOnly,
-                    requirements: vk::MemoryRequirements::builder()
-                        .alignment(512)
-                        .size(1024)
-                        .memory_type_bits(u32::MAX)
-                        .build(),
-                    allocation_type: AllocationType::Buffer,
-                    is_dedicated: false,
-                })
+                .allocate(
+                    &ctx.logical_device,
+                    &AllocationDescriptor {
+                        location: MemoryLocation::GpuOnly,
+                        requirements: vk::MemoryRequirementsBuilder::new()
+                            .alignment(512)
+                            .size(1024)
+                            .memory_type_bits(u32::MAX)
+                            .build(),
+                        allocation_type: AllocationType::Buffer,
+                        is_dedicated: false,
+                    },
+                )
                 .unwrap();
             assert_eq!(allocation.size, 1024);
             assert_eq!(allocation.offset, i * 1024);
@@ -100,7 +105,7 @@ fn allocator_allocation_1024() {
         .drain(..)
         .enumerate()
         .for_each(|(i, allocation)| {
-            alloc.free(&allocation).unwrap();
+            alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
 
             assert_eq!(alloc.allocation_count(), (1023 - i));
             assert_eq!(alloc.used_bytes(), 1024 * (1023 - i) as u64);
@@ -110,6 +115,8 @@ fn allocator_allocation_1024() {
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
+
+    alloc.cleanup(&ctx.logical_device);
 }
 
 #[test]
@@ -118,7 +125,6 @@ fn allocator_allocation_256() {
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
-        &ctx.logical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
     );
 
@@ -126,16 +132,19 @@ fn allocator_allocation_256() {
         .into_iter()
         .map(|i| {
             let allocation = alloc
-                .allocate(&AllocationDescriptor {
-                    location: MemoryLocation::GpuOnly,
-                    requirements: vk::MemoryRequirements::builder()
-                        .alignment(1024)
-                        .size(256)
-                        .memory_type_bits(u32::MAX)
-                        .build(),
-                    allocation_type: AllocationType::Buffer,
-                    is_dedicated: false,
-                })
+                .allocate(
+                    &ctx.logical_device,
+                    &AllocationDescriptor {
+                        location: MemoryLocation::GpuOnly,
+                        requirements: vk::MemoryRequirementsBuilder::new()
+                            .alignment(1024)
+                            .size(256)
+                            .memory_type_bits(u32::MAX)
+                            .build(),
+                        allocation_type: AllocationType::Buffer,
+                        is_dedicated: false,
+                    },
+                )
                 .unwrap();
             assert_eq!(allocation.size, 256);
             assert_eq!(allocation.offset, i * 1024);
@@ -153,7 +162,7 @@ fn allocator_allocation_256() {
         .drain(..)
         .enumerate()
         .for_each(|(i, allocation)| {
-            alloc.free(&allocation).unwrap();
+            alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
 
             assert_eq!(alloc.allocation_count(), 1023 - i);
             assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as u64);
@@ -166,6 +175,8 @@ fn allocator_allocation_256() {
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
+
+    alloc.cleanup(&ctx.logical_device);
 }
 
 #[test]
@@ -174,7 +185,6 @@ fn allocator_reverse_free() {
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
-        &ctx.logical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
     );
 
@@ -182,16 +192,19 @@ fn allocator_reverse_free() {
         .into_iter()
         .map(|i| {
             let allocation = alloc
-                .allocate(&AllocationDescriptor {
-                    location: MemoryLocation::GpuOnly,
-                    requirements: vk::MemoryRequirements::builder()
-                        .alignment(1024)
-                        .size(256)
-                        .memory_type_bits(u32::MAX)
-                        .build(),
-                    allocation_type: AllocationType::Buffer,
-                    is_dedicated: false,
-                })
+                .allocate(
+                    &ctx.logical_device,
+                    &AllocationDescriptor {
+                        location: MemoryLocation::GpuOnly,
+                        requirements: vk::MemoryRequirementsBuilder::new()
+                            .alignment(1024)
+                            .size(256)
+                            .memory_type_bits(u32::MAX)
+                            .build(),
+                        allocation_type: AllocationType::Buffer,
+                        is_dedicated: false,
+                    },
+                )
                 .unwrap();
             assert_eq!(allocation.size, 256);
             assert_eq!(allocation.offset, i * 1024);
@@ -212,7 +225,7 @@ fn allocator_reverse_free() {
         .for_each(|(i, allocation)| {
             assert_eq!(allocation.offset, ((1024 * 1024) - ((i + 1) * 1024)) as u64);
 
-            alloc.free(&allocation).unwrap();
+            alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
 
             assert_eq!(alloc.allocation_count(), 1023 - i);
             assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as u64);
@@ -225,6 +238,8 @@ fn allocator_reverse_free() {
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
+
+    alloc.cleanup(&ctx.logical_device);
 }
 
 #[test]
@@ -233,7 +248,6 @@ fn allocator_free_every_second_time() {
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
-        &ctx.logical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
     );
 
@@ -241,16 +255,19 @@ fn allocator_free_every_second_time() {
         .into_iter()
         .map(|_| {
             let allocation = alloc
-                .allocate(&AllocationDescriptor {
-                    location: MemoryLocation::GpuOnly,
-                    requirements: vk::MemoryRequirements::builder()
-                        .alignment(1024)
-                        .size(1024)
-                        .memory_type_bits(u32::MAX)
-                        .build(),
-                    allocation_type: AllocationType::Buffer,
-                    is_dedicated: false,
-                })
+                .allocate(
+                    &ctx.logical_device,
+                    &AllocationDescriptor {
+                        location: MemoryLocation::GpuOnly,
+                        requirements: vk::MemoryRequirementsBuilder::new()
+                            .alignment(1024)
+                            .size(1024)
+                            .memory_type_bits(u32::MAX)
+                            .build(),
+                        allocation_type: AllocationType::Buffer,
+                        is_dedicated: false,
+                    },
+                )
                 .unwrap();
             allocation
         })
@@ -270,17 +287,19 @@ fn allocator_free_every_second_time() {
         .collect();
 
     odd.drain(..).for_each(|allocation| {
-        alloc.free(&allocation).unwrap();
+        alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
     });
 
     even.drain(..).for_each(|allocation| {
-        alloc.free(&allocation).unwrap();
+        alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
     });
 
     assert_eq!(alloc.allocation_count(), 0);
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
+
+    alloc.cleanup(&ctx.logical_device);
 }
 
 #[test]
@@ -289,21 +308,23 @@ fn allocator_allocation_dedicated() {
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
-        &ctx.logical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
     );
 
     let allocation = alloc
-        .allocate(&AllocationDescriptor {
-            location: MemoryLocation::GpuOnly,
-            requirements: vk::MemoryRequirements::builder()
-                .alignment(512)
-                .size(10 * 1024 * 1024) // 10 MiB
-                .memory_type_bits(u32::MAX)
-                .build(),
-            allocation_type: AllocationType::Buffer,
-            is_dedicated: false,
-        })
+        .allocate(
+            &ctx.logical_device,
+            &AllocationDescriptor {
+                location: MemoryLocation::GpuOnly,
+                requirements: vk::MemoryRequirementsBuilder::new()
+                    .alignment(512)
+                    .size(10 * 1024 * 1024) // 10 MiB
+                    .memory_type_bits(u32::MAX)
+                    .build(),
+                allocation_type: AllocationType::Buffer,
+                is_dedicated: false,
+            },
+        )
         .unwrap();
     assert_eq!(allocation.size, 10 * 1024 * 1024);
     assert_eq!(allocation.offset, 0);
@@ -313,10 +334,12 @@ fn allocator_allocation_dedicated() {
     assert_eq!(alloc.used_bytes(), 10 * 1024 * 1024);
     assert_eq!(alloc.unused_bytes(), 0);
 
-    alloc.free(&allocation).unwrap();
+    alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
 
     assert_eq!(alloc.allocation_count(), 0);
     assert_eq!(alloc.unused_range_count(), 0);
     assert_eq!(alloc.used_bytes(), 0);
     assert_eq!(alloc.unused_bytes(), 0);
+
+    alloc.cleanup(&ctx.logical_device);
 }
