@@ -1,4 +1,4 @@
-//! A collection of Vulkan memory allocators.
+//! A segregated list memory allocator for Vulkan.
 use std::ffi::c_void;
 use std::ptr;
 
