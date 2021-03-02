@@ -327,9 +327,19 @@ impl Allocator {
         };
 
         if let Some(chunk_key) = allocation.chunk_key {
+            #[cfg(feature = "tracing")]
+            debug!(
+                "Deallocating chunk on device memory 0x{:02x}, offset {}, size {}",
+                allocation.device_memory.0, allocation.offset, allocation.size
+            );
             memory_pool.free(chunk_key)?;
         } else {
             // Dedicated block
+            #[cfg(feature = "tracing")]
+            debug!(
+                "Deallocating dedicated device memory 0x{:02x} size {}",
+                allocation.device_memory.0, allocation.size
+            );
             let mut block = memory_pool
                 .blocks
                 .remove(allocation.block_key)
