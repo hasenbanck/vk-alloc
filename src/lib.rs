@@ -863,11 +863,8 @@ impl MemoryBlock {
             let allocation_flags = vk::MemoryAllocateFlags::DEVICE_ADDRESS;
             let mut flags_info = vk::MemoryAllocateFlagsInfoBuilder::new().flags(allocation_flags);
 
-            let alloc_info = if cfg!(features = "vk-buffer-device-address") {
-                alloc_info.extend_from(&mut flags_info)
-            } else {
-                alloc_info
-            };
+            #[cfg(feature = "vk-buffer-device-address")]
+            let alloc_info = alloc_info.extend_from(&mut flags_info);
 
             let res = unsafe { device.allocate_memory(&alloc_info, None, None) };
             if res.is_err() {
