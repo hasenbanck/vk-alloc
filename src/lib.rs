@@ -857,6 +857,7 @@ impl MemoryBlock {
         is_mappable: bool,
         is_dedicated: bool,
     ) -> Result<Self> {
+        #[cfg(feature = "vk-buffer-device-address")]
         let device_memory = {
             let alloc_info = vk::MemoryAllocateInfoBuilder::new()
                 .allocation_size(size)
@@ -864,9 +865,21 @@ impl MemoryBlock {
 
             let allocation_flags = vk::MemoryAllocateFlags::DEVICE_ADDRESS;
             let mut flags_info = vk::MemoryAllocateFlagsInfoBuilder::new().flags(allocation_flags);
-
-            #[cfg(feature = "vk-buffer-device-address")]
             let alloc_info = alloc_info.extend_from(&mut flags_info);
+
+            let res = unsafe { device.allocate_memory(&alloc_info, None, None) };
+            if res.is_err() {
+                return Err(AllocatorError::OutOfMemory);
+            }
+
+            res.unwrap()
+        };
+
+        #[cfg(not(feature = "vk-buffer-device-address"))]
+        let device_memory = {
+            let alloc_info = vk::MemoryAllocateInfoBuilder::new()
+                .allocation_size(size)
+                .memory_type_index(memory_type_index as u32);
 
             let res = unsafe { device.allocate_memory(&alloc_info, None, None) };
             if res.is_err() {
