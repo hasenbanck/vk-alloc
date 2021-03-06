@@ -343,3 +343,81 @@ fn allocator_allocation_dedicated() {
 
     alloc.cleanup(&ctx.logical_device);
 }
+
+#[test]
+fn allocator_properly_merge_free_entries() {
+    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let mut alloc = Allocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &AllocatorDescriptor { block_size: 20 }, // 1 MiB
+    );
+
+    let a0 = alloc
+        .allocate(
+            &ctx.logical_device,
+            &AllocationDescriptor {
+                location: MemoryLocation::GpuOnly,
+                requirements: vk::MemoryRequirementsBuilder::new()
+                    .alignment(256)
+                    .size(256)
+                    .memory_type_bits(u32::MAX)
+                    .build(),
+                allocation_type: AllocationType::Buffer,
+                is_dedicated: false,
+            },
+        )
+        .unwrap();
+    let a1 = alloc
+        .allocate(
+            &ctx.logical_device,
+            &AllocationDescriptor {
+                location: MemoryLocation::GpuOnly,
+                requirements: vk::MemoryRequirementsBuilder::new()
+                    .alignment(256)
+                    .size(256)
+                    .memory_type_bits(u32::MAX)
+                    .build(),
+                allocation_type: AllocationType::Buffer,
+                is_dedicated: false,
+            },
+        )
+        .unwrap();
+    let a2 = alloc
+        .allocate(
+            &ctx.logical_device,
+            &AllocationDescriptor {
+                location: MemoryLocation::GpuOnly,
+                requirements: vk::MemoryRequirementsBuilder::new()
+                    .alignment(256)
+                    .size(256)
+                    .memory_type_bits(u32::MAX)
+                    .build(),
+                allocation_type: AllocationType::Buffer,
+                is_dedicated: false,
+            },
+        )
+        .unwrap();
+    let a3 = alloc
+        .allocate(
+            &ctx.logical_device,
+            &AllocationDescriptor {
+                location: MemoryLocation::GpuOnly,
+                requirements: vk::MemoryRequirementsBuilder::new()
+                    .alignment(256)
+                    .size(256)
+                    .memory_type_bits(u32::MAX)
+                    .build(),
+                allocation_type: AllocationType::Buffer,
+                is_dedicated: false,
+            },
+        )
+        .unwrap();
+
+    alloc.deallocate(&ctx.logical_device, &a3).unwrap();
+    alloc.deallocate(&ctx.logical_device, &a1).unwrap();
+    alloc.deallocate(&ctx.logical_device, &a2).unwrap();
+    alloc.deallocate(&ctx.logical_device, &a0).unwrap();
+
+    alloc.cleanup(&ctx.logical_device);
+}

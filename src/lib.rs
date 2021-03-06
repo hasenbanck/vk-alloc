@@ -750,31 +750,23 @@ impl MemoryPool {
     }
 
     fn free(&mut self, chunk_key: ChunkKey) -> Result<()> {
-        let (previous_key, next_key) = {
+        let (previous_key, next_key, size) = {
             let chunk = &mut self.chunks[chunk_key];
             chunk.is_free = true;
-            (chunk.previous, chunk.next)
+            (chunk.previous, chunk.next, chunk.size)
         };
+        self.add_to_free_list(chunk_key, size);
 
         if let Some(next_key) = next_key {
             if self.chunks[next_key].is_free {
-                self.merge_rhs_into_lhs_chunk(chunk_key, next_key, true)?;
+                self.merge_rhs_into_lhs_chunk(chunk_key, next_key)?;
             }
         }
-
-        let mut is_chunk_merged = false;
 
         if let Some(previous_key) = previous_key {
             if self.chunks[previous_key].is_free {
-                is_chunk_merged = true;
-                self.merge_rhs_into_lhs_chunk(previous_key, chunk_key, false)?;
+                self.merge_rhs_into_lhs_chunk(previous_key, chunk_key)?;
             }
-        }
-
-        if !is_chunk_merged {
-            let chunk = &mut self.chunks[chunk_key];
-            let chunk_bucket_index = calculate_bucket_index(chunk.size);
-            self.free_chunks[chunk_bucket_index as usize].push(chunk_key);
         }
 
         Ok(())
@@ -784,22 +776,27 @@ impl MemoryPool {
         &mut self,
         lhs_chunk_key: ChunkKey,
         rhs_chunk_key: ChunkKey,
-        cleanup_free_list: bool,
     ) -> Result<()> {
         let (rhs_size, rhs_offset, rhs_next) = {
             let chunk = self.chunks.remove(rhs_chunk_key).ok_or_else(|| {
                 AllocatorError::Internal("chunk key not present in chunk slotmap".to_owned())
             })?;
-            if cleanup_free_list {
-                self.remove_from_free_list(rhs_chunk_key, chunk.size)?;
-            }
+            self.remove_from_free_list(rhs_chunk_key, chunk.size)?;
 
             (chunk.size, chunk.offset, chunk.next)
         };
 
         let lhs_chunk = &mut self.chunks[lhs_chunk_key];
+
+        let old_size = lhs_chunk.size;
+
         lhs_chunk.next = rhs_next;
         lhs_chunk.size = (rhs_offset + rhs_size) - lhs_chunk.offset;
+
+        let new_size = lhs_chunk.size;
+
+        self.remove_from_free_list(lhs_chunk_key, old_size)?;
+        self.add_to_free_list(lhs_chunk_key, new_size);
 
         if let Some(rhs_next) = rhs_next {
             let chunk = &mut self.chunks[rhs_next];
@@ -807,6 +804,11 @@ impl MemoryPool {
         }
 
         Ok(())
+    }
+
+    fn add_to_free_list(&mut self, chunk_key: ChunkKey, size: u64) {
+        let chunk_bucket_index = calculate_bucket_index(size);
+        self.free_chunks[chunk_bucket_index as usize].push(chunk_key);
     }
 
     fn remove_from_free_list(&mut self, chunk_key: ChunkKey, chunk_size: u64) -> Result<()> {
@@ -827,7 +829,7 @@ impl MemoryPool {
 }
 
 /// A chunk inside a memory block. Next = None is the start chunk. Previous = None is the end chunk.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct MemoryChunk {
     block_key: BlockKey,
     size: u64,
@@ -838,7 +840,7 @@ struct MemoryChunk {
 }
 
 /// A reserved memory block.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct MemoryBlock {
     device_memory: vk::DeviceMemory,
     size: u64,
