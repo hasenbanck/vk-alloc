@@ -501,6 +501,8 @@ pub struct Allocation {
     pub mapped_ptr: Option<std::ptr::NonNull<c_void>>,
 }
 
+unsafe impl Send for Allocation {}
+
 impl Allocation {
     /// Returns a valid mapped slice if the memory is host visible, otherwise it will return None.
     /// The slice already references the exact memory region of the sub allocation, so no offset needs to be applied.
@@ -847,6 +849,8 @@ struct MemoryBlock {
     mapped_ptr: *mut c_void,
     is_dedicated: bool,
 }
+
+unsafe impl Send for MemoryBlock {}
 
 impl MemoryBlock {
     #[cfg_attr(feature = "profiling", profiling::function)]
