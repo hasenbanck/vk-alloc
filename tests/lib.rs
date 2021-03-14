@@ -108,7 +108,7 @@ fn allocator_allocation_1024() {
             alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
 
             assert_eq!(alloc.allocation_count(), (1023 - i));
-            assert_eq!(alloc.used_bytes(), 1024 * (1023 - i) as u64);
+            assert_eq!(alloc.used_bytes(), 1024 * (1023 - i) as vk::DeviceSize);
         });
 
     assert_eq!(alloc.allocation_count(), 0);
@@ -165,10 +165,10 @@ fn allocator_allocation_256() {
             alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
 
             assert_eq!(alloc.allocation_count(), 1023 - i);
-            assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as u64);
+            assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as vk::DeviceSize);
             // sic! We free from the front. The padding is part of the next chunk.
             assert_eq!(alloc.unused_range_count(), 1023 - i);
-            assert_eq!(alloc.unused_bytes(), 768 * (1023 - i) as u64);
+            assert_eq!(alloc.unused_bytes(), 768 * (1023 - i) as vk::DeviceSize);
         });
 
     assert_eq!(alloc.allocation_count(), 0);
@@ -223,15 +223,18 @@ fn allocator_reverse_free() {
         .rev()
         .enumerate()
         .for_each(|(i, allocation)| {
-            assert_eq!(allocation.offset, ((1024 * 1024) - ((i + 1) * 1024)) as u64);
+            assert_eq!(
+                allocation.offset,
+                ((1024 * 1024) - ((i + 1) * 1024)) as vk::DeviceSize
+            );
 
             alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
 
             assert_eq!(alloc.allocation_count(), 1023 - i);
-            assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as u64);
+            assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as vk::DeviceSize);
             // sic! We free from the front. The padding is part of the next chunk.
             assert_eq!(alloc.unused_range_count(), 1023 - i);
-            assert_eq!(alloc.unused_bytes(), 768 * (1023 - i) as u64);
+            assert_eq!(alloc.unused_bytes(), 768 * (1023 - i) as vk::DeviceSize);
         });
 
     assert_eq!(alloc.allocation_count(), 0);

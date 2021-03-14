@@ -35,7 +35,7 @@ pub struct Allocator {
     is_integrated: bool,
     buffer_pools: Vec<MemoryPool>,
     image_pools: Vec<MemoryPool>,
-    block_size: u64,
+    block_size: vk::DeviceSize,
     memory_types_size: u32,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
 }
@@ -64,7 +64,7 @@ impl Allocator {
 
         let memory_types_size = memory_types.len() as u32;
 
-        let block_size = (2u64).pow(descriptor.block_size as u32);
+        let block_size = (2u64).pow(descriptor.block_size as u32) as vk::DeviceSize;
 
         let buffer_pools = memory_types
             .iter()
@@ -87,7 +87,7 @@ impl Allocator {
             .map(|(i, memory_type)| {
                 MemoryPool::new(
                     memory_types_size + i as u32,
-                    (2u64).pow(descriptor.block_size as u32),
+                    (2u64).pow(descriptor.block_size as u32) as vk::DeviceSize,
                     i,
                     memory_type
                         .property_flags
@@ -188,7 +188,7 @@ impl Allocator {
         descriptor: &AllocationDescriptor,
     ) -> Result<Allocation> {
         let size = descriptor.requirements.size;
-        let alignment = descriptor.requirements.alignment;
+        let alignment = descriptor.requirements.alignment as vk::DeviceSize;
 
         #[cfg(feature = "tracing")]
         debug!(
@@ -403,29 +403,29 @@ impl Allocator {
     }
 
     /// Number of bytes used by the allocations.
-    pub fn used_bytes(&self) -> u64 {
-        let buffer_bytes: u64 = self
+    pub fn used_bytes(&self) -> vk::DeviceSize {
+        let buffer_bytes: vk::DeviceSize = self
             .buffer_pools
             .iter()
             .flat_map(|buffer| &buffer.chunks)
             .filter(|(_, chunk)| !chunk.is_free)
             .map(|(_, chunk)| chunk.size)
             .sum();
-        let image_bytes: u64 = self
+        let image_bytes: vk::DeviceSize = self
             .image_pools
             .iter()
             .flat_map(|buffer| &buffer.chunks)
             .filter(|(_, chunk)| !chunk.is_free)
             .map(|(_, chunk)| chunk.size)
             .sum();
-        let dedicated_buffer_bytes: u64 = self
+        let dedicated_buffer_bytes: vk::DeviceSize = self
             .buffer_pools
             .iter()
             .flat_map(|buffer| &buffer.blocks)
             .filter(|(_, block)| block.is_dedicated)
             .map(|(_, chunk)| chunk.size)
             .sum();
-        let dedicated_image_bytes: u64 = self
+        let dedicated_image_bytes: vk::DeviceSize = self
             .image_pools
             .iter()
             .flat_map(|buffer| &buffer.blocks)
@@ -437,7 +437,7 @@ impl Allocator {
     }
 
     /// Number of bytes used by the unused ranges between allocations.
-    pub fn unused_bytes(&self) -> u64 {
+    pub fn unused_bytes(&self) -> vk::DeviceSize {
         count_unused_bytes(&self.buffer_pools) + count_unused_bytes(&self.image_pools)
     }
 
@@ -494,9 +494,9 @@ pub struct Allocation {
     /// The `DeviceMemory` of the allocation. Managed by the allocator.
     pub device_memory: vk::DeviceMemory,
     /// The offset inside the `DeviceMemory`.
-    pub offset: u64,
+    pub offset: vk::DeviceSize,
     /// The size of the allocation.
-    pub size: u64,
+    pub size: vk::DeviceSize,
     /// Returns a pointer into the mapped memory if it is host visible, otherwise returns None.
     pub mapped_ptr: Option<std::ptr::NonNull<c_void>>,
 }
@@ -543,7 +543,7 @@ new_key_type! {
 struct BestFitCandidate {
     key: ChunkKey,
     free_list_index: usize,
-    free_size: u64,
+    free_size: vk::DeviceSize,
 }
 
 /// A managed memory region of a specific memory type.
@@ -552,7 +552,7 @@ struct BestFitCandidate {
 /// so that internal memory fragmentation is kept low.
 struct MemoryPool {
     pool_index: u32,
-    block_size: u64,
+    block_size: vk::DeviceSize,
     memory_type_index: usize,
     is_mappable: bool,
     blocks: SlotMap<BlockKey, MemoryBlock>,
@@ -562,13 +562,18 @@ struct MemoryPool {
 }
 
 impl MemoryPool {
-    fn new(pool_index: u32, block_size: u64, memory_type_index: usize, is_mappable: bool) -> Self {
+    fn new(
+        pool_index: u32,
+        block_size: vk::DeviceSize,
+        memory_type_index: usize,
+        is_mappable: bool,
+    ) -> Self {
         let blocks = SlotMap::with_capacity_and_key(1024);
         let chunks = SlotMap::with_capacity_and_key(1024);
 
         // The smallest bucket size is 256b, which is log2(256) = 8. So the maximal bucket size is
         // "64 - 8 - log2(block_size - 1)". We can't have a free chunk that is bigger than a block.
-        let num_buckets = 64 - MINIMAL_BUCKET_SIZE_LOG2 - (block_size - 1u64).leading_zeros();
+        let num_buckets = 64 - MINIMAL_BUCKET_SIZE_LOG2 - (block_size - 1).leading_zeros();
 
         // We preallocate only a reasonable amount of entries for each bucket.
         // The highest bucket for example can only hold two values at most.
@@ -578,7 +583,7 @@ impl MemoryPool {
                 let min_bucket_element_size = if i == 0 {
                     512
                 } else {
-                    2u64.pow(MINIMAL_BUCKET_SIZE_LOG2 - 1 + i)
+                    2u64.pow(MINIMAL_BUCKET_SIZE_LOG2 - 1 + i) as vk::DeviceSize
                 };
                 let max_elements = (block_size / min_bucket_element_size) as usize;
                 Vec::with_capacity(512.min(max_elements))
@@ -600,7 +605,7 @@ impl MemoryPool {
     fn allocate_dedicated(
         &mut self,
         device: &erupt::DeviceLoader,
-        size: u64,
+        size: vk::DeviceSize,
     ) -> Result<Allocation> {
         let block = MemoryBlock::new(device, size, self.memory_type_index, self.is_mappable, true)?;
 
@@ -621,8 +626,8 @@ impl MemoryPool {
     fn allocate(
         &mut self,
         device: &erupt::DeviceLoader,
-        size: u64,
-        alignment: u64,
+        size: vk::DeviceSize,
+        alignment: vk::DeviceSize,
     ) -> Result<Allocation> {
         let mut bucket_index = calculate_bucket_index(size);
 
@@ -650,7 +655,7 @@ impl MemoryPool {
 
                 let offset = align_up(chunk.offset, alignment);
                 let padding = offset - chunk.offset;
-                let aligned_size = padding + size;
+                let aligned_size = (padding + size) as vk::DeviceSize;
 
                 // Try to find the best fitting chunk.
                 if chunk.size >= aligned_size {
@@ -659,7 +664,7 @@ impl MemoryPool {
                     let best_fit_size = if let Some(best_fit) = &best_fit_candidate {
                         best_fit.free_size
                     } else {
-                        u64::MAX
+                        u64::MAX as vk::DeviceSize
                     };
 
                     if free_size < best_fit_size {
@@ -808,12 +813,16 @@ impl MemoryPool {
         Ok(())
     }
 
-    fn add_to_free_list(&mut self, chunk_key: ChunkKey, size: u64) {
+    fn add_to_free_list(&mut self, chunk_key: ChunkKey, size: vk::DeviceSize) {
         let chunk_bucket_index = calculate_bucket_index(size);
         self.free_chunks[chunk_bucket_index as usize].push(chunk_key);
     }
 
-    fn remove_from_free_list(&mut self, chunk_key: ChunkKey, chunk_size: u64) -> Result<()> {
+    fn remove_from_free_list(
+        &mut self,
+        chunk_key: ChunkKey,
+        chunk_size: vk::DeviceSize,
+    ) -> Result<()> {
         let bucket_index = calculate_bucket_index(chunk_size);
         let free_list_index = self.free_chunks[bucket_index as usize]
             .iter()
@@ -834,8 +843,8 @@ impl MemoryPool {
 #[derive(Clone, Debug)]
 struct MemoryChunk {
     block_key: BlockKey,
-    size: u64,
-    offset: u64,
+    size: vk::DeviceSize,
+    offset: vk::DeviceSize,
     previous: Option<ChunkKey>,
     next: Option<ChunkKey>,
     is_free: bool,
@@ -845,7 +854,7 @@ struct MemoryChunk {
 #[derive(Clone, Debug)]
 struct MemoryBlock {
     device_memory: vk::DeviceMemory,
-    size: u64,
+    size: vk::DeviceSize,
     mapped_ptr: *mut c_void,
     is_dedicated: bool,
 }
@@ -856,7 +865,7 @@ impl MemoryBlock {
     #[cfg_attr(feature = "profiling", profiling::function)]
     fn new(
         device: &erupt::DeviceLoader,
-        size: u64,
+        size: vk::DeviceSize,
         memory_type_index: usize,
         is_mappable: bool,
         is_dedicated: bool,
@@ -897,7 +906,13 @@ impl MemoryBlock {
         if is_mappable {
             unsafe {
                 if device
-                    .map_memory(device_memory, 0, vk::WHOLE_SIZE, None, &mut mapped_ptr)
+                    .map_memory(
+                        device_memory,
+                        0,
+                        vk::WHOLE_SIZE as vk::DeviceSize,
+                        None,
+                        &mut mapped_ptr,
+                    )
                     .is_err()
                 {
                     device.free_memory(Some(device_memory), None);
@@ -925,8 +940,8 @@ impl MemoryBlock {
 }
 
 #[inline]
-fn align_up(offset: u64, alignment: u64) -> u64 {
-    (offset + (alignment - 1u64)) & !(alignment - 1u64)
+fn align_up(offset: vk::DeviceSize, alignment: vk::DeviceSize) -> vk::DeviceSize {
+    (offset + (alignment - 1)) & !(alignment - 1)
 }
 
 fn query_driver(
@@ -980,11 +995,11 @@ fn print_memory_types(
 }
 
 #[inline]
-fn calculate_bucket_index(size: u64) -> u32 {
+fn calculate_bucket_index(size: vk::DeviceSize) -> u32 {
     if size <= 256 {
         0
     } else {
-        64 - MINIMAL_BUCKET_SIZE_LOG2 - (size - 1u64).leading_zeros() - 1
+        64 - MINIMAL_BUCKET_SIZE_LOG2 - (size - 1).leading_zeros() - 1
     }
 }
 
@@ -993,8 +1008,8 @@ fn count_unused_ranges(pools: &[MemoryPool]) -> usize {
     pools.iter().for_each(|buffer| {
         collect_start_chunks(buffer).iter().for_each(|key| {
             let mut next_key: ChunkKey = *key;
-            let mut previous_size: u64 = 0;
-            let mut previous_offset: u64 = 0;
+            let mut previous_size: vk::DeviceSize = 0;
+            let mut previous_offset: vk::DeviceSize = 0;
             loop {
                 let chunk = &buffer.chunks[next_key];
                 if chunk.offset != previous_offset + previous_size {
@@ -1015,13 +1030,13 @@ fn count_unused_ranges(pools: &[MemoryPool]) -> usize {
     unused_count
 }
 
-fn count_unused_bytes(pools: &[MemoryPool]) -> u64 {
-    let mut unused_bytes: u64 = 0;
+fn count_unused_bytes(pools: &[MemoryPool]) -> vk::DeviceSize {
+    let mut unused_bytes: vk::DeviceSize = 0;
     pools.iter().for_each(|buffer| {
         collect_start_chunks(buffer).iter().for_each(|key| {
             let mut next_key: ChunkKey = *key;
-            let mut previous_size: u64 = 0;
-            let mut previous_offset: u64 = 0;
+            let mut previous_size: vk::DeviceSize = 0;
+            let mut previous_offset: vk::DeviceSize = 0;
             loop {
                 let chunk = &buffer.chunks[next_key];
                 if chunk.offset != previous_offset + previous_size {

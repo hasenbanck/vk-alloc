@@ -31,7 +31,7 @@ pub struct VulkanContext {
 
     pub physical_device: vk::PhysicalDevice,
     pub queue: vk::Queue,
-    pub buffer_image_granularity: u64,
+    pub buffer_image_granularity: vk::DeviceSize,
 }
 
 impl Drop for VulkanContext {
