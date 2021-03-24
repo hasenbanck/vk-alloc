@@ -30,6 +30,7 @@ impl Default for AllocatorDescriptor {
 }
 
 /// The general purpose memory allocator. Implemented as a segregated list allocator.
+#[derive(Debug)]
 pub struct Allocator {
     driver_id: vk::DriverId,
     is_integrated: bool,
@@ -473,7 +474,7 @@ pub enum MemoryLocation {
 }
 
 /// The descriptor for an allocation on the allocator.
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct AllocationDescriptor {
     /// Location where the memory allocation should be stored.
     pub location: MemoryLocation,
@@ -540,6 +541,7 @@ new_key_type! {
     struct ChunkKey;
 }
 
+#[derive(Clone, Debug)]
 struct BestFitCandidate {
     key: ChunkKey,
     free_list_index: usize,
@@ -550,6 +552,7 @@ struct BestFitCandidate {
 ///
 /// Used to separate buffer (linear) and texture (optimal) memory regions,
 /// so that internal memory fragmentation is kept low.
+#[derive(Debug)]
 struct MemoryPool {
     pool_index: u32,
     block_size: vk::DeviceSize,
@@ -851,7 +854,7 @@ struct MemoryChunk {
 }
 
 /// A reserved memory block.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct MemoryBlock {
     device_memory: vk::DeviceMemory,
     size: vk::DeviceSize,
