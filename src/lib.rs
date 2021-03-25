@@ -492,17 +492,19 @@ pub struct Allocation {
     pool_index: u32,
     block_key: BlockKey,
     chunk_key: Option<ChunkKey>,
+    mapped_ptr: Option<std::ptr::NonNull<c_void>>,
+
     /// The `DeviceMemory` of the allocation. Managed by the allocator.
     pub device_memory: vk::DeviceMemory,
     /// The offset inside the `DeviceMemory`.
     pub offset: vk::DeviceSize,
     /// The size of the allocation.
     pub size: vk::DeviceSize,
-    /// Returns a pointer into the mapped memory if it is host visible, otherwise returns None.
-    pub mapped_ptr: Option<std::ptr::NonNull<c_void>>,
 }
 
 unsafe impl Send for Allocation {}
+
+unsafe impl Sync for Allocation {}
 
 impl Allocation {
     /// Returns a valid mapped slice if the memory is host visible, otherwise it will return None.
