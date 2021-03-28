@@ -677,7 +677,7 @@ impl MemoryPool {
         debug_assert!(bucket_index <= self.max_bucket_index);
 
         loop {
-            // We couldn't find an empty block, so we will allocate a new one.
+            // We couldn't find a suitable empty chunk, so we will allocate a new block.
             if bucket_index > self.max_bucket_index {
                 self.allocate_new_block(device)?;
                 bucket_index = self.max_bucket_index;
@@ -688,7 +688,7 @@ impl MemoryPool {
             // Find best fit in this bucket.
             let mut best_fit_candidate: Option<BestFitCandidate> = None;
             for (index, key) in free_list.iter().enumerate() {
-                let chunk = &mut self.chunks[*key];
+                let chunk = &self.chunks[*key];
                 debug_assert!(chunk.is_free);
 
                 if chunk.size < size {
