@@ -13,6 +13,10 @@ pub enum AllocatorError {
     NoCompatibleMemoryTypeFound,
     /// Alignment is not a power of 2.
     InvalidAlignment,
+    /// Can't find referenced chunk in chunk list.
+    CantFindChunk,
+    /// Can't find referenced block in block list.
+    CantFindBlock,
     /// An allocator implementation error.
     Internal(String),
 }
@@ -37,6 +41,12 @@ impl std::fmt::Display for AllocatorError {
             }
             AllocatorError::Internal(message) => {
                 write!(f, "{}", message)
+            }
+            AllocatorError::CantFindChunk => {
+                write!(f, "can't find chunk in chunk list")
+            }
+            AllocatorError::CantFindBlock => {
+                write!(f, "can't find block in block list")
             }
         }
     }

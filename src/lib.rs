@@ -4,7 +4,6 @@ use std::ptr;
 use std::sync::Mutex;
 
 use erupt::{vk, ExtendableFrom};
-use slotmap::{new_key_type, SlotMap};
 #[cfg(feature = "tracing")]
 use tracing::{debug, info};
 
@@ -330,7 +329,7 @@ impl Allocator {
                 "Deallocating chunk on device memory 0x{:02x}, offset {}, size {}",
                 allocation.device_memory.0, allocation.offset, allocation.size
             );
-            memory_pool.lock().unwrap().free(chunk_key)?;
+            memory_pool.lock().unwrap().free_chunk(chunk_key)?;
         } else {
             // Dedicated block
             #[cfg(feature = "tracing")]
@@ -338,15 +337,10 @@ impl Allocator {
                 "Deallocating dedicated device memory 0x{:02x} size {}",
                 allocation.device_memory.0, allocation.size
             );
-            let mut block = memory_pool
+            memory_pool
                 .lock()
                 .unwrap()
-                .blocks
-                .remove(allocation.block_key)
-                .ok_or_else(|| {
-                    AllocatorError::Internal("can't find block key in block slotmap".to_owned())
-                })?;
-            block.destroy(&device);
+                .free_block(&device, allocation.block_key)?;
         }
 
         Ok(())
@@ -356,18 +350,18 @@ impl Allocator {
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn cleanup(&mut self, device: &erupt::DeviceLoader) {
         self.buffer_pools.drain(..).for_each(|pool| {
-            pool.lock()
-                .unwrap()
-                .blocks
-                .iter_mut()
-                .for_each(|(_, block)| block.destroy(&device))
+            pool.lock().unwrap().blocks.iter_mut().for_each(|block| {
+                if let Some(block) = block {
+                    block.destroy(&device)
+                }
+            })
         });
         self.image_pools.drain(..).for_each(|pool| {
-            pool.lock()
-                .unwrap()
-                .blocks
-                .iter_mut()
-                .for_each(|(_, block)| block.destroy(&device))
+            pool.lock().unwrap().blocks.iter_mut().for_each(|block| {
+                if let Some(block) = block {
+                    block.destroy(&device)
+                }
+            })
         });
     }
 
@@ -377,8 +371,10 @@ impl Allocator {
         for pool in &self.buffer_pools {
             let pool = pool.lock().unwrap();
             for chunk in &pool.chunks {
-                if !chunk.1.is_free {
-                    buffer_count += 1;
+                if let Some(chunk) = chunk {
+                    if !chunk.is_free {
+                        buffer_count += 1;
+                    }
                 }
             }
         }
@@ -387,8 +383,10 @@ impl Allocator {
         for pool in &self.image_pools {
             let pool = pool.lock().unwrap();
             for chunk in &pool.chunks {
-                if !chunk.1.is_free {
-                    image_count += 1;
+                if let Some(chunk) = chunk {
+                    if !chunk.is_free {
+                        image_count += 1;
+                    }
                 }
             }
         }
@@ -397,8 +395,10 @@ impl Allocator {
         for pool in &self.buffer_pools {
             let pool = pool.lock().unwrap();
             for block in &pool.blocks {
-                if block.1.is_dedicated {
-                    dedicated_buffer_count += 1;
+                if let Some(block) = block {
+                    if block.is_dedicated {
+                        dedicated_buffer_count += 1;
+                    }
                 }
             }
         }
@@ -407,8 +407,10 @@ impl Allocator {
         for pool in &self.image_pools {
             let pool = pool.lock().unwrap();
             for block in &pool.blocks {
-                if block.1.is_dedicated {
-                    dedicated_image_count += 1;
+                if let Some(block) = block {
+                    if block.is_dedicated {
+                        dedicated_image_count += 1;
+                    }
                 }
             }
         }
@@ -426,9 +428,11 @@ impl Allocator {
         let mut buffer_bytes = 0;
         for pool in &self.buffer_pools {
             let pool = pool.lock().unwrap();
-            for (_, chunk) in &pool.chunks {
-                if !chunk.is_free {
-                    buffer_bytes += chunk.size;
+            for chunk in &pool.chunks {
+                if let Some(chunk) = chunk {
+                    if !chunk.is_free {
+                        buffer_bytes += chunk.size;
+                    }
                 }
             }
         }
@@ -436,9 +440,11 @@ impl Allocator {
         let mut image_bytes = 0;
         for pool in &self.image_pools {
             let pool = pool.lock().unwrap();
-            for (_, chunk) in &pool.chunks {
-                if !chunk.is_free {
-                    image_bytes += chunk.size;
+            for chunk in &pool.chunks {
+                if let Some(chunk) = chunk {
+                    if !chunk.is_free {
+                        image_bytes += chunk.size;
+                    }
                 }
             }
         }
@@ -446,9 +452,11 @@ impl Allocator {
         let mut dedicated_buffer_bytes = 0;
         for pool in &self.buffer_pools {
             let pool = pool.lock().unwrap();
-            for (_, block) in &pool.blocks {
-                if block.is_dedicated {
-                    dedicated_buffer_bytes += block.size;
+            for block in &pool.blocks {
+                if let Some(block) = block {
+                    if block.is_dedicated {
+                        dedicated_buffer_bytes += block.size;
+                    }
                 }
             }
         }
@@ -456,9 +464,11 @@ impl Allocator {
         let mut dedicated_image_bytes = 0;
         for pool in &self.image_pools {
             let pool = pool.lock().unwrap();
-            for (_, block) in &pool.blocks {
-                if block.is_dedicated {
-                    dedicated_image_bytes += block.size;
+            for block in &pool.blocks {
+                if let Some(block) = block {
+                    if block.is_dedicated {
+                        dedicated_image_bytes += block.size;
+                    }
                 }
             }
         }
@@ -527,8 +537,8 @@ pub struct AllocationDescriptor {
 #[derive(Clone, Debug)]
 pub struct Allocation {
     pool_index: u32,
-    block_key: BlockKey,
-    chunk_key: Option<ChunkKey>,
+    block_key: usize,
+    chunk_key: Option<usize>,
     mapped_ptr: Option<std::ptr::NonNull<c_void>>,
 
     /// The `DeviceMemory` of the allocation. Managed by the allocator.
@@ -575,14 +585,9 @@ impl Allocation {
     }
 }
 
-new_key_type! {
-    struct BlockKey;
-    struct ChunkKey;
-}
-
 #[derive(Clone, Debug)]
 struct BestFitCandidate {
-    key: ChunkKey,
+    key: usize,
     free_list_index: usize,
     free_size: vk::DeviceSize,
 }
@@ -597,10 +602,14 @@ struct MemoryPool {
     block_size: vk::DeviceSize,
     memory_type_index: usize,
     is_mappable: bool,
-    blocks: SlotMap<BlockKey, MemoryBlock>,
-    chunks: SlotMap<ChunkKey, MemoryChunk>,
-    free_chunks: Vec<Vec<ChunkKey>>,
+    blocks: Vec<Option<MemoryBlock>>,
+    chunks: Vec<Option<MemoryChunk>>,
+    free_chunks: Vec<Vec<usize>>,
     max_bucket_index: u32,
+
+    // Helper lists to find free slots inside the block and chunks lists.
+    free_block_slots: Vec<usize>,
+    free_chunk_slots: Vec<usize>,
 }
 
 impl MemoryPool {
@@ -610,8 +619,8 @@ impl MemoryPool {
         memory_type_index: usize,
         is_mappable: bool,
     ) -> Self {
-        let blocks = SlotMap::with_capacity_and_key(1024);
-        let chunks = SlotMap::with_capacity_and_key(1024);
+        let blocks = Vec::with_capacity(128);
+        let chunks = Vec::with_capacity(128);
 
         // The smallest bucket size is 256b, which is log2(256) = 8. So the maximal bucket size is
         // "64 - 8 - log2(block_size - 1)". We can't have a free chunk that is bigger than a block.
@@ -640,7 +649,31 @@ impl MemoryPool {
             blocks,
             chunks,
             free_chunks,
+            free_block_slots: Vec::with_capacity(16),
+            free_chunk_slots: Vec::with_capacity(16),
             max_bucket_index: num_buckets - 1,
+        }
+    }
+
+    fn add_block(&mut self, block: MemoryBlock) -> usize {
+        if let Some(key) = self.free_block_slots.pop() {
+            self.blocks[key] = Some(block);
+            key
+        } else {
+            let key = self.blocks.len();
+            self.blocks.push(Some(block));
+            key
+        }
+    }
+
+    fn add_chunk(&mut self, chunk: MemoryChunk) -> usize {
+        if let Some(key) = self.free_chunk_slots.pop() {
+            self.chunks[key] = Some(chunk);
+            key
+        } else {
+            let key = self.chunks.len();
+            self.chunks.push(Some(chunk));
+            key
         }
     }
 
@@ -654,9 +687,11 @@ impl MemoryPool {
         let device_memory = block.device_memory;
         let mapped_ptr = std::ptr::NonNull::new(block.mapped_ptr);
 
+        let key = self.add_block(block);
+
         Ok(Allocation {
             pool_index: self.pool_index,
-            block_key: self.blocks.insert(block),
+            block_key: key,
             chunk_key: None,
             device_memory,
             offset: 0,
@@ -688,7 +723,9 @@ impl MemoryPool {
             // Find best fit in this bucket.
             let mut best_fit_candidate: Option<BestFitCandidate> = None;
             for (index, key) in free_list.iter().enumerate() {
-                let chunk = &self.chunks[*key];
+                let chunk = &self.chunks[*key]
+                    .as_ref()
+                    .expect("can't find chunk in chunk list");
                 debug_assert!(chunk.is_free);
 
                 if chunk.size < size {
@@ -725,21 +762,26 @@ impl MemoryPool {
 
                 // Split the lhs chunk and register the rhs as a new free chunk.
                 let rhs_chunk_key = if candidate.free_size != 0 {
-                    let lhs = self.chunks[candidate.key].clone();
+                    let lhs = self.chunks[candidate.key]
+                        .as_ref()
+                        .expect("can't find chunk in chunk list")
+                        .clone();
 
                     let lhs_aligned_offset = align_up(lhs.offset, alignment);
                     let lhs_padding = lhs_aligned_offset - lhs.offset;
                     let rhs_offset = lhs.offset + size + lhs_padding;
                     let rhs_size = lhs.size - (lhs_padding + size);
 
-                    let rhs_chunk_key = self.chunks.insert(MemoryChunk {
+                    let chunk = MemoryChunk {
                         block_key: lhs.block_key,
                         size: rhs_size,
                         offset: rhs_offset,
                         previous: Some(candidate.key),
                         next: lhs.next,
                         is_free: true,
-                    });
+                    };
+
+                    let rhs_chunk_key = self.add_chunk(chunk);
 
                     let rhs_bucket_index = calculate_bucket_index(rhs_size);
                     self.free_chunks[rhs_bucket_index as usize].push(rhs_chunk_key);
@@ -749,7 +791,9 @@ impl MemoryPool {
                     None
                 };
 
-                let lhs = &mut self.chunks[candidate.key];
+                let lhs = self.chunks[candidate.key]
+                    .as_mut()
+                    .expect("can't find chunk in chunk list");
                 lhs.is_free = false;
                 lhs.offset = align_up(lhs.offset, alignment);
                 lhs.size = size;
@@ -758,7 +802,9 @@ impl MemoryPool {
                     lhs.next = Some(new_chunk_key);
                 }
 
-                let block = &self.blocks[lhs.block_key];
+                let block = self.blocks[lhs.block_key]
+                    .as_ref()
+                    .expect("can't find block in block list");
 
                 return Ok(Allocation {
                     pool_index: self.pool_index,
@@ -783,59 +829,84 @@ impl MemoryPool {
             self.is_mappable,
             false,
         )?;
-        let block_key = self.blocks.insert(block);
-        let chunk_key = self.chunks.insert(MemoryChunk {
+
+        let block_key = self.add_block(block);
+
+        let chunk = MemoryChunk {
             block_key,
             size: self.block_size,
             offset: 0,
             previous: None,
             next: None,
             is_free: true,
-        });
+        };
+
+        let chunk_key = self.add_chunk(chunk);
 
         self.free_chunks[self.max_bucket_index as usize].push(chunk_key);
 
         Ok(())
     }
 
-    fn free(&mut self, chunk_key: ChunkKey) -> Result<()> {
+    fn free_chunk(&mut self, chunk_key: usize) -> Result<()> {
         let (previous_key, next_key, size) = {
-            let chunk = &mut self.chunks[chunk_key];
+            let chunk = self.chunks[chunk_key]
+                .as_mut()
+                .ok_or(AllocatorError::CantFindChunk)?;
             chunk.is_free = true;
             (chunk.previous, chunk.next, chunk.size)
         };
         self.add_to_free_list(chunk_key, size);
 
         if let Some(next_key) = next_key {
-            if self.chunks[next_key].is_free {
-                self.merge_rhs_into_lhs_chunk(chunk_key, next_key)?;
+            if self.chunks[next_key]
+                .as_ref()
+                .expect("can't find chunk in chunk list")
+                .is_free
+            {
+                self.merge_rhs_into_lhs_chunk(chunk_key, next_key);
             }
         }
 
         if let Some(previous_key) = previous_key {
-            if self.chunks[previous_key].is_free {
-                self.merge_rhs_into_lhs_chunk(previous_key, chunk_key)?;
+            if self.chunks[previous_key]
+                .as_ref()
+                .expect("can't find chunk in chunk list")
+                .is_free
+            {
+                self.merge_rhs_into_lhs_chunk(previous_key, chunk_key);
             }
         }
 
         Ok(())
     }
 
-    fn merge_rhs_into_lhs_chunk(
-        &mut self,
-        lhs_chunk_key: ChunkKey,
-        rhs_chunk_key: ChunkKey,
-    ) -> Result<()> {
+    fn free_block(&mut self, device: &erupt::DeviceLoader, block_key: usize) -> Result<()> {
+        let mut block = self.blocks[block_key]
+            .take()
+            .ok_or(AllocatorError::CantFindBlock)?;
+
+        block.destroy(device);
+
+        self.free_block_slots.push(block_key);
+
+        Ok(())
+    }
+
+    fn merge_rhs_into_lhs_chunk(&mut self, lhs_chunk_key: usize, rhs_chunk_key: usize) {
         let (rhs_size, rhs_offset, rhs_next) = {
-            let chunk = self.chunks.remove(rhs_chunk_key).ok_or_else(|| {
-                AllocatorError::Internal("chunk key not present in chunk slotmap".to_owned())
-            })?;
-            self.remove_from_free_list(rhs_chunk_key, chunk.size)?;
+            let chunk = self.chunks[rhs_chunk_key]
+                .take()
+                .expect("can't find chunk in chunk list");
+            self.free_chunk_slots.push(rhs_chunk_key);
+            self.remove_from_free_list(rhs_chunk_key, chunk.size);
 
             (chunk.size, chunk.offset, chunk.next)
         };
 
-        let lhs_chunk = &mut self.chunks[lhs_chunk_key];
+        let lhs_chunk = self.chunks[lhs_chunk_key]
+            .as_mut()
+            .expect("can't find chunk in chunk list");
 
         let old_size = lhs_chunk.size;
 
@@ -844,51 +915,42 @@ impl MemoryPool {
 
         let new_size = lhs_chunk.size;
 
-        self.remove_from_free_list(lhs_chunk_key, old_size)?;
+        self.remove_from_free_list(lhs_chunk_key, old_size);
         self.add_to_free_list(lhs_chunk_key, new_size);
 
         if let Some(rhs_next) = rhs_next {
-            let chunk = &mut self.chunks[rhs_next];
+            let chunk = self.chunks[rhs_next]
+                .as_mut()
+                .expect("previous memory chunk was None");
             chunk.previous = Some(lhs_chunk_key);
         }
-
-        Ok(())
     }
 
-    fn add_to_free_list(&mut self, chunk_key: ChunkKey, size: vk::DeviceSize) {
+    fn add_to_free_list(&mut self, chunk_key: usize, size: vk::DeviceSize) {
         let chunk_bucket_index = calculate_bucket_index(size);
         self.free_chunks[chunk_bucket_index as usize].push(chunk_key);
     }
 
-    fn remove_from_free_list(
-        &mut self,
-        chunk_key: ChunkKey,
-        chunk_size: vk::DeviceSize,
-    ) -> Result<()> {
+    fn remove_from_free_list(&mut self, chunk_key: usize, chunk_size: vk::DeviceSize) {
         let bucket_index = calculate_bucket_index(chunk_size);
         let free_list_index = self.free_chunks[bucket_index as usize]
             .iter()
             .enumerate()
             .find(|(_, key)| **key == chunk_key)
             .map(|(index, _)| index)
-            .ok_or_else(|| {
-                AllocatorError::Internal(
-                    "can't find chunk key in expected free list bucket".to_owned(),
-                )
-            })?;
+            .expect("can't find chunk in chunk list");
         self.free_chunks[bucket_index as usize].remove(free_list_index);
-        Ok(())
     }
 }
 
 /// A chunk inside a memory block. Next = None is the start chunk. Previous = None is the end chunk.
 #[derive(Clone, Debug)]
 struct MemoryChunk {
-    block_key: BlockKey,
+    block_key: usize,
     size: vk::DeviceSize,
     offset: vk::DeviceSize,
-    previous: Option<ChunkKey>,
-    next: Option<ChunkKey>,
+    previous: Option<usize>,
+    next: Option<usize>,
     is_free: bool,
 }
 
@@ -1047,13 +1109,16 @@ fn calculate_bucket_index(size: vk::DeviceSize) -> u32 {
 
 fn count_unused_ranges(pools: &[Mutex<MemoryPool>]) -> usize {
     let mut unused_count: usize = 0;
-    pools.iter().for_each(|buffer| {
-        collect_start_chunks(buffer).iter().for_each(|key| {
-            let mut next_key: ChunkKey = *key;
+    pools.iter().for_each(|pool| {
+        collect_start_chunks(pool).iter().for_each(|key| {
+            let mut next_key: usize = *key;
             let mut previous_size: vk::DeviceSize = 0;
             let mut previous_offset: vk::DeviceSize = 0;
             loop {
-                let chunk = &buffer.lock().unwrap().chunks[next_key];
+                let pool = pool.lock().unwrap();
+                let chunk = pool.chunks[next_key]
+                    .as_ref()
+                    .expect("can't find chunk in chunk list");
                 if chunk.offset != previous_offset + previous_size {
                     unused_count += 1;
                 }
@@ -1074,13 +1139,16 @@ fn count_unused_ranges(pools: &[Mutex<MemoryPool>]) -> usize {
 
 fn count_unused_bytes(pools: &[Mutex<MemoryPool>]) -> vk::DeviceSize {
     let mut unused_bytes: vk::DeviceSize = 0;
-    pools.iter().for_each(|buffer| {
-        collect_start_chunks(buffer).iter().for_each(|key| {
-            let mut next_key: ChunkKey = *key;
+    pools.iter().for_each(|pool| {
+        collect_start_chunks(pool).iter().for_each(|key| {
+            let mut next_key: usize = *key;
             let mut previous_size: vk::DeviceSize = 0;
             let mut previous_offset: vk::DeviceSize = 0;
             loop {
-                let chunk = &buffer.lock().unwrap().chunks[next_key];
+                let pool = pool.lock().unwrap();
+                let chunk = pool.chunks[next_key]
+                    .as_ref()
+                    .expect("can't find chunk in chunk list");
                 if chunk.offset != previous_offset + previous_size {
                     unused_bytes += chunk.offset - (previous_offset + previous_size);
                 }
@@ -1100,13 +1168,19 @@ fn count_unused_bytes(pools: &[Mutex<MemoryPool>]) -> vk::DeviceSize {
 }
 
 #[inline]
-fn collect_start_chunks(buffer: &Mutex<MemoryPool>) -> Vec<ChunkKey> {
-    buffer
-        .lock()
+fn collect_start_chunks(pool: &Mutex<MemoryPool>) -> Vec<usize> {
+    pool.lock()
         .unwrap()
         .chunks
         .iter()
-        .filter(|(_, chunk)| chunk.previous.is_none())
-        .map(|(key, _)| key)
+        .enumerate()
+        .filter(|(_, chunk)| {
+            if let Some(chunk) = chunk {
+                chunk.previous.is_none()
+            } else {
+                false
+            }
+        })
+        .map(|(id, _)| id)
         .collect()
 }
