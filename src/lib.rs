@@ -1,5 +1,6 @@
 //! A segregated list memory allocator for Vulkan.
 use std::ffi::c_void;
+use std::num::NonZeroUsize;
 use std::ptr;
 use std::sync::Mutex;
 
@@ -13,7 +14,7 @@ mod error;
 
 type Result<T> = std::result::Result<T, AllocatorError>;
 
-// For a minimal bucket size of 256b as log2.
+/// For a minimal bucket size of 256b as log2.
 const MINIMAL_BUCKET_SIZE_LOG2: u32 = 8;
 
 /// Describes the configuration of an `Allocator`.
@@ -537,8 +538,8 @@ pub struct AllocationDescriptor {
 #[derive(Clone, Debug)]
 pub struct Allocation {
     pool_index: u32,
-    block_key: usize,
-    chunk_key: Option<usize>,
+    block_key: NonZeroUsize,
+    chunk_key: Option<NonZeroUsize>,
     mapped_ptr: Option<std::ptr::NonNull<c_void>>,
 
     /// The `DeviceMemory` of the allocation. Managed by the allocator.
@@ -587,7 +588,7 @@ impl Allocation {
 
 #[derive(Clone, Debug)]
 struct BestFitCandidate {
-    key: usize,
+    key: NonZeroUsize,
     free_list_index: usize,
     free_size: vk::DeviceSize,
 }
@@ -604,12 +605,12 @@ struct MemoryPool {
     is_mappable: bool,
     blocks: Vec<Option<MemoryBlock>>,
     chunks: Vec<Option<MemoryChunk>>,
-    free_chunks: Vec<Vec<usize>>,
+    free_chunks: Vec<Vec<NonZeroUsize>>,
     max_bucket_index: u32,
 
     // Helper lists to find free slots inside the block and chunks lists.
-    free_block_slots: Vec<usize>,
-    free_chunk_slots: Vec<usize>,
+    free_block_slots: Vec<NonZeroUsize>,
+    free_chunk_slots: Vec<NonZeroUsize>,
 }
 
 impl MemoryPool {
@@ -619,8 +620,12 @@ impl MemoryPool {
         memory_type_index: usize,
         is_mappable: bool,
     ) -> Self {
-        let blocks = Vec::with_capacity(128);
-        let chunks = Vec::with_capacity(128);
+        let mut blocks = Vec::with_capacity(128);
+        let mut chunks = Vec::with_capacity(128);
+
+        // Fill the Zero slot with None, since our keys are of type NonZeroUsize
+        blocks.push(None);
+        chunks.push(None);
 
         // The smallest bucket size is 256b, which is log2(256) = 8. So the maximal bucket size is
         // "64 - 8 - log2(block_size - 1)". We can't have a free chunk that is bigger than a block.
@@ -655,25 +660,25 @@ impl MemoryPool {
         }
     }
 
-    fn add_block(&mut self, block: MemoryBlock) -> usize {
+    fn add_block(&mut self, block: MemoryBlock) -> NonZeroUsize {
         if let Some(key) = self.free_block_slots.pop() {
-            self.blocks[key] = Some(block);
+            self.blocks[key.get()] = Some(block);
             key
         } else {
             let key = self.blocks.len();
             self.blocks.push(Some(block));
-            key
+            NonZeroUsize::new(key).expect("new block key was zero")
         }
     }
 
-    fn add_chunk(&mut self, chunk: MemoryChunk) -> usize {
+    fn add_chunk(&mut self, chunk: MemoryChunk) -> NonZeroUsize {
         if let Some(key) = self.free_chunk_slots.pop() {
-            self.chunks[key] = Some(chunk);
+            self.chunks[key.get()] = Some(chunk);
             key
         } else {
             let key = self.chunks.len();
             self.chunks.push(Some(chunk));
-            key
+            NonZeroUsize::new(key).expect("new chunk key was zero")
         }
     }
 
@@ -723,7 +728,7 @@ impl MemoryPool {
             // Find best fit in this bucket.
             let mut best_fit_candidate: Option<BestFitCandidate> = None;
             for (index, key) in free_list.iter().enumerate() {
-                let chunk = &self.chunks[*key]
+                let chunk = &self.chunks[key.get()]
                     .as_ref()
                     .expect("can't find chunk in chunk list");
                 debug_assert!(chunk.is_free);
@@ -762,7 +767,7 @@ impl MemoryPool {
 
                 // Split the lhs chunk and register the rhs as a new free chunk.
                 let rhs_chunk_key = if candidate.free_size != 0 {
-                    let lhs = self.chunks[candidate.key]
+                    let lhs = self.chunks[candidate.key.get()]
                         .as_ref()
                         .expect("can't find chunk in chunk list")
                         .clone();
@@ -791,7 +796,7 @@ impl MemoryPool {
                     None
                 };
 
-                let lhs = self.chunks[candidate.key]
+                let lhs = self.chunks[candidate.key.get()]
                     .as_mut()
                     .expect("can't find chunk in chunk list");
                 lhs.is_free = false;
@@ -802,7 +807,7 @@ impl MemoryPool {
                     lhs.next = Some(new_chunk_key);
                 }
 
-                let block = self.blocks[lhs.block_key]
+                let block = self.blocks[lhs.block_key.get()]
                     .as_ref()
                     .expect("can't find block in block list");
 
@@ -848,9 +853,9 @@ impl MemoryPool {
         Ok(())
     }
 
-    fn free_chunk(&mut self, chunk_key: usize) -> Result<()> {
+    fn free_chunk(&mut self, chunk_key: NonZeroUsize) -> Result<()> {
         let (previous_key, next_key, size) = {
-            let chunk = self.chunks[chunk_key]
+            let chunk = self.chunks[chunk_key.get()]
                 .as_mut()
                 .ok_or(AllocatorError::CantFindChunk)?;
             chunk.is_free = true;
@@ -858,31 +863,35 @@ impl MemoryPool {
         };
         self.add_to_free_list(chunk_key, size);
 
-        if let Some(next_key) = next_key {
-            if self.chunks[next_key]
-                .as_ref()
-                .expect("can't find chunk in chunk list")
-                .is_free
-            {
-                self.merge_rhs_into_lhs_chunk(chunk_key, next_key);
-            }
-        }
-
-        if let Some(previous_key) = previous_key {
-            if self.chunks[previous_key]
-                .as_ref()
-                .expect("can't find chunk in chunk list")
-                .is_free
-            {
-                self.merge_rhs_into_lhs_chunk(previous_key, chunk_key);
-            }
-        }
+        self.merge_free_neighbor(next_key, chunk_key, false);
+        self.merge_free_neighbor(previous_key, chunk_key, true);
 
         Ok(())
     }
 
-    fn free_block(&mut self, device: &erupt::DeviceLoader, block_key: usize) -> Result<()> {
-        let mut block = self.blocks[block_key]
+    fn merge_free_neighbor(
+        &mut self,
+        neighbor: Option<NonZeroUsize>,
+        chunk_key: NonZeroUsize,
+        neighbor_is_lhs: bool,
+    ) {
+        if let Some(neighbor_key) = neighbor {
+            if self.chunks[neighbor_key.get()]
+                .as_ref()
+                .expect("can't find chunk in chunk list")
+                .is_free
+            {
+                if neighbor_is_lhs {
+                    self.merge_rhs_into_lhs_chunk(neighbor_key, chunk_key);
+                } else {
+                    self.merge_rhs_into_lhs_chunk(chunk_key, neighbor_key);
+                }
+            }
+        }
+    }
+
+    fn free_block(&mut self, device: &erupt::DeviceLoader, block_key: NonZeroUsize) -> Result<()> {
+        let mut block = self.blocks[block_key.get()]
             .take()
             .ok_or(AllocatorError::CantFindBlock)?;
 
@@ -893,9 +902,13 @@ impl MemoryPool {
         Ok(())
     }
 
-    fn merge_rhs_into_lhs_chunk(&mut self, lhs_chunk_key: usize, rhs_chunk_key: usize) {
+    fn merge_rhs_into_lhs_chunk(
+        &mut self,
+        lhs_chunk_key: NonZeroUsize,
+        rhs_chunk_key: NonZeroUsize,
+    ) {
         let (rhs_size, rhs_offset, rhs_next) = {
-            let chunk = self.chunks[rhs_chunk_key]
+            let chunk = self.chunks[rhs_chunk_key.get()]
                 .take()
                 .expect("can't find chunk in chunk list");
             self.free_chunk_slots.push(rhs_chunk_key);
@@ -904,7 +917,7 @@ impl MemoryPool {
             (chunk.size, chunk.offset, chunk.next)
         };
 
-        let lhs_chunk = self.chunks[lhs_chunk_key]
+        let lhs_chunk = self.chunks[lhs_chunk_key.get()]
             .as_mut()
             .expect("can't find chunk in chunk list");
 
@@ -919,19 +932,19 @@ impl MemoryPool {
         self.add_to_free_list(lhs_chunk_key, new_size);
 
         if let Some(rhs_next) = rhs_next {
-            let chunk = self.chunks[rhs_next]
+            let chunk = self.chunks[rhs_next.get()]
                 .as_mut()
                 .expect("previous memory chunk was None");
             chunk.previous = Some(lhs_chunk_key);
         }
     }
 
-    fn add_to_free_list(&mut self, chunk_key: usize, size: vk::DeviceSize) {
+    fn add_to_free_list(&mut self, chunk_key: NonZeroUsize, size: vk::DeviceSize) {
         let chunk_bucket_index = calculate_bucket_index(size);
         self.free_chunks[chunk_bucket_index as usize].push(chunk_key);
     }
 
-    fn remove_from_free_list(&mut self, chunk_key: usize, chunk_size: vk::DeviceSize) {
+    fn remove_from_free_list(&mut self, chunk_key: NonZeroUsize, chunk_size: vk::DeviceSize) {
         let bucket_index = calculate_bucket_index(chunk_size);
         let free_list_index = self.free_chunks[bucket_index as usize]
             .iter()
@@ -946,11 +959,11 @@ impl MemoryPool {
 /// A chunk inside a memory block. Next = None is the start chunk. Previous = None is the end chunk.
 #[derive(Clone, Debug)]
 struct MemoryChunk {
-    block_key: usize,
+    block_key: NonZeroUsize,
     size: vk::DeviceSize,
     offset: vk::DeviceSize,
-    previous: Option<usize>,
-    next: Option<usize>,
+    previous: Option<NonZeroUsize>,
+    next: Option<NonZeroUsize>,
     is_free: bool,
 }
 
@@ -1111,12 +1124,12 @@ fn count_unused_ranges(pools: &[Mutex<MemoryPool>]) -> usize {
     let mut unused_count: usize = 0;
     pools.iter().for_each(|pool| {
         collect_start_chunks(pool).iter().for_each(|key| {
-            let mut next_key: usize = *key;
+            let mut next_key: NonZeroUsize = *key;
             let mut previous_size: vk::DeviceSize = 0;
             let mut previous_offset: vk::DeviceSize = 0;
             loop {
                 let pool = pool.lock().unwrap();
-                let chunk = pool.chunks[next_key]
+                let chunk = pool.chunks[next_key.get()]
                     .as_ref()
                     .expect("can't find chunk in chunk list");
                 if chunk.offset != previous_offset + previous_size {
@@ -1141,12 +1154,12 @@ fn count_unused_bytes(pools: &[Mutex<MemoryPool>]) -> vk::DeviceSize {
     let mut unused_bytes: vk::DeviceSize = 0;
     pools.iter().for_each(|pool| {
         collect_start_chunks(pool).iter().for_each(|key| {
-            let mut next_key: usize = *key;
+            let mut next_key: NonZeroUsize = *key;
             let mut previous_size: vk::DeviceSize = 0;
             let mut previous_offset: vk::DeviceSize = 0;
             loop {
                 let pool = pool.lock().unwrap();
-                let chunk = pool.chunks[next_key]
+                let chunk = pool.chunks[next_key.get()]
                     .as_ref()
                     .expect("can't find chunk in chunk list");
                 if chunk.offset != previous_offset + previous_size {
@@ -1168,7 +1181,7 @@ fn count_unused_bytes(pools: &[Mutex<MemoryPool>]) -> vk::DeviceSize {
 }
 
 #[inline]
-fn collect_start_chunks(pool: &Mutex<MemoryPool>) -> Vec<usize> {
+fn collect_start_chunks(pool: &Mutex<MemoryPool>) -> Vec<NonZeroUsize> {
     pool.lock()
         .unwrap()
         .chunks
@@ -1181,6 +1194,6 @@ fn collect_start_chunks(pool: &Mutex<MemoryPool>) -> Vec<usize> {
                 false
             }
         })
-        .map(|(id, _)| id)
+        .map(|(id, _)| NonZeroUsize::new(id).expect("id was zero"))
         .collect()
 }
