@@ -13,7 +13,7 @@ Targets Vulkan 1.2+ using [erupt](https://gitlab.com/Friz64/erupt).
 
 All features are optional by default.
 
-* `tracing` Adds logging using [tracing](https://github.com/tokio-rs/tracing).
+* `logging` Adds logging using [tracing](https://github.com/tokio-rs/tracing).
 * `profiling` Adds support for [profiling](https://github.com/aclysma/profiling).
 * `vk-buffer-device-address`: Enables the usage of "vkGetBufferDeviceAddress". Needs the Vulkan
   1.2 "bufferDeviceAddress" device feature enabled.
