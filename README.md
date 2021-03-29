@@ -20,4 +20,4 @@ All features are optional by default.
 
 ## License
 
-Licensed under MIT or Apache-2.0.
+Licensed under MIT or Apache-2.0 or ZLIB.
