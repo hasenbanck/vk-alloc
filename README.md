@@ -2,6 +2,7 @@
 
 [![Latest version](https://img.shields.io/crates/v/vk-alloc.svg)](https://crates.io/crates/vk-alloc)
 [![Documentation](https://docs.rs/vk-alloc/badge.svg)](https://docs.rs/vk-alloc)
+![ZLIB](https://img.shields.io/badge/license-zlib-blue.svg)
 ![MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Apache](https://img.shields.io/badge/license-Apache-blue.svg)
 
