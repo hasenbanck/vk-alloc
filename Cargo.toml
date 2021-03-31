@@ -1,6 +1,6 @@
 [package]
 name = "vk-alloc"
-version = "1.0.0"
+version = "1.1.0"
 authors = ["Nils Hasenbanck <nils@hasenbanck.de>"]
 description = "A segregated list memory allocator for Vulkan."
 license = "Zlib OR MIT OR Apache-2.0"
@@ -11,7 +11,7 @@ keywords = ["vk", "vulkan", "erupt", "allocator", "memory"]
 edition = "2018"
 
 [dependencies]
-erupt = "0.17"
+erupt = "0.18"
 tracing = { version = "0.1", default-features = false, optional = true }
 profiling = { version = "0.1", optional = true }
 
