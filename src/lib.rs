@@ -766,60 +766,76 @@ impl MemoryPool {
                 self.free_chunks[bucket_index as usize].remove(candidate.free_list_index);
 
                 // Split the lhs chunk and register the rhs as a new free chunk.
-                let rhs_chunk_key = if candidate.free_size != 0 {
-                    let lhs = self.chunks[candidate.key.get()]
+                let new_free_chunk_key = if candidate.free_size != 0 {
+                    let candidate_chunk = self.chunks[candidate.key.get()]
                         .as_ref()
-                        .expect("can't find chunk in chunk list")
+                        .expect("can't find candidate in chunk list")
                         .clone();
 
-                    let lhs_aligned_offset = align_up(lhs.offset, alignment);
-                    let lhs_padding = lhs_aligned_offset - lhs.offset;
-                    let rhs_offset = lhs.offset + size + lhs_padding;
-                    let rhs_size = lhs.size - (lhs_padding + size);
+                    let candidate_chunk_aligned_offset =
+                        align_up(candidate_chunk.offset, alignment);
+                    let candidate_chunk_padding =
+                        candidate_chunk_aligned_offset - candidate_chunk.offset;
+                    let new_free_offset = candidate_chunk.offset + size + candidate_chunk_padding;
+                    let new_free_size = candidate_chunk.size - (candidate_chunk_padding + size);
 
-                    let chunk = MemoryChunk {
-                        block_key: lhs.block_key,
-                        size: rhs_size,
-                        offset: rhs_offset,
+                    let new_free_chunk = MemoryChunk {
+                        block_key: candidate_chunk.block_key,
+                        size: new_free_size,
+                        offset: new_free_offset,
                         previous: Some(candidate.key),
-                        next: lhs.next,
+                        next: candidate_chunk.next,
                         is_free: true,
                     };
 
-                    let rhs_chunk_key = self.add_chunk(chunk);
+                    let new_free_chunk_key = self.add_chunk(new_free_chunk);
 
-                    let rhs_bucket_index = calculate_bucket_index(rhs_size);
-                    self.free_chunks[rhs_bucket_index as usize].push(rhs_chunk_key);
+                    let rhs_bucket_index = calculate_bucket_index(new_free_size);
+                    self.free_chunks[rhs_bucket_index as usize].push(new_free_chunk_key);
 
-                    Some(rhs_chunk_key)
+                    Some(new_free_chunk_key)
                 } else {
                     None
                 };
 
-                let lhs = self.chunks[candidate.key.get()]
+                let candidate_chunk = self.chunks[candidate.key.get()]
                     .as_mut()
                     .expect("can't find chunk in chunk list");
-                lhs.is_free = false;
-                lhs.offset = align_up(lhs.offset, alignment);
-                lhs.size = size;
+                candidate_chunk.is_free = false;
+                candidate_chunk.offset = align_up(candidate_chunk.offset, alignment);
+                candidate_chunk.size = size;
 
-                if let Some(new_chunk_key) = rhs_chunk_key {
-                    lhs.next = Some(new_chunk_key);
-                }
-
-                let block = self.blocks[lhs.block_key.get()]
+                let block = self.blocks[candidate_chunk.block_key.get()]
                     .as_ref()
                     .expect("can't find block in block list");
 
-                return Ok(Allocation {
+                let allocation = Allocation {
                     pool_index: self.pool_index,
-                    block_key: lhs.block_key,
+                    block_key: candidate_chunk.block_key,
                     chunk_key: Some(candidate.key),
                     device_memory: block.device_memory,
-                    offset: lhs.offset,
-                    size: lhs.size,
+                    offset: candidate_chunk.offset,
+                    size: candidate_chunk.size,
                     mapped_ptr: std::ptr::NonNull::new(block.mapped_ptr),
-                });
+                };
+
+                // Properly link the chain of chunks.
+                let old_next_key = if let Some(new_free_chunk_key) = new_free_chunk_key {
+                    let old_next_key = candidate_chunk.next;
+                    candidate_chunk.next = Some(new_free_chunk_key);
+                    old_next_key
+                } else {
+                    None
+                };
+
+                if let Some(old_next_key) = old_next_key {
+                    let old_next = self.chunks[old_next_key.get()]
+                        .as_mut()
+                        .expect("can't find old next in chunk list");
+                    old_next.previous = new_free_chunk_key;
+                }
+
+                return Ok(allocation);
             }
 
             bucket_index += 1;
@@ -890,18 +906,6 @@ impl MemoryPool {
         }
     }
 
-    fn free_block(&mut self, device: &erupt::DeviceLoader, block_key: NonZeroUsize) -> Result<()> {
-        let mut block = self.blocks[block_key.get()]
-            .take()
-            .ok_or(AllocatorError::CantFindBlock)?;
-
-        block.destroy(device);
-
-        self.free_block_slots.push(block_key);
-
-        Ok(())
-    }
-
     fn merge_rhs_into_lhs_chunk(
         &mut self,
         lhs_chunk_key: NonZeroUsize,
@@ -912,6 +916,8 @@ impl MemoryPool {
                 .take()
                 .expect("can't find chunk in chunk list");
             self.free_chunk_slots.push(rhs_chunk_key);
+            debug_assert!(chunk.previous == Some(lhs_chunk_key));
+
             self.remove_from_free_list(rhs_chunk_key, chunk.size);
 
             (chunk.size, chunk.offset, chunk.next)
@@ -920,6 +926,8 @@ impl MemoryPool {
         let lhs_chunk = self.chunks[lhs_chunk_key.get()]
             .as_mut()
             .expect("can't find chunk in chunk list");
+
+        debug_assert!(lhs_chunk.next == Some(rhs_chunk_key));
 
         let old_size = lhs_chunk.size;
 
@@ -937,6 +945,18 @@ impl MemoryPool {
                 .expect("previous memory chunk was None");
             chunk.previous = Some(lhs_chunk_key);
         }
+    }
+
+    fn free_block(&mut self, device: &erupt::DeviceLoader, block_key: NonZeroUsize) -> Result<()> {
+        let mut block = self.blocks[block_key.get()]
+            .take()
+            .ok_or(AllocatorError::CantFindBlock)?;
+
+        block.destroy(device);
+
+        self.free_block_slots.push(block_key);
+
+        Ok(())
     }
 
     fn add_to_free_list(&mut self, chunk_key: NonZeroUsize, size: vk::DeviceSize) {
