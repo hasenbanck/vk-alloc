@@ -809,6 +809,14 @@ impl MemoryPool {
                     .as_ref()
                     .expect("can't find block in block list");
 
+                let mapped_ptr = if !block.mapped_ptr.is_null() {
+                    let offset_ptr =
+                        unsafe { block.mapped_ptr.add(candidate_chunk.offset as usize) };
+                    std::ptr::NonNull::new(offset_ptr)
+                } else {
+                    None
+                };
+
                 let allocation = Allocation {
                     pool_index: self.pool_index,
                     block_key: candidate_chunk.block_key,
@@ -816,7 +824,7 @@ impl MemoryPool {
                     device_memory: block.device_memory,
                     offset: candidate_chunk.offset,
                     size: candidate_chunk.size,
-                    mapped_ptr: std::ptr::NonNull::new(block.mapped_ptr),
+                    mapped_ptr,
                 };
 
                 // Properly link the chain of chunks.

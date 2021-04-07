@@ -1,4 +1,7 @@
 use erupt::vk;
+use rand::Rng;
+use rand_xoshiro::rand_core::SeedableRng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 use vk_alloc::{
     Allocation, AllocationDescriptor, AllocationType, Allocator, AllocatorDescriptor,
@@ -422,5 +425,61 @@ fn allocator_properly_merge_free_entries() {
     alloc.deallocate(&ctx.logical_device, &a2).unwrap();
     alloc.deallocate(&ctx.logical_device, &a0).unwrap();
 
+    alloc.cleanup(&ctx.logical_device);
+}
+
+#[test]
+fn allocator_fuzzy() {
+    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let mut alloc = Allocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &AllocatorDescriptor::default(),
+    );
+
+    let mut allocations: Vec<(u8, Allocation)> = Vec::with_capacity(10_0000);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0);
+
+    for i in 0..10_000 {
+        let is_allocation = rng.gen_bool(0.6);
+
+        if (is_allocation && !allocations.is_empty()) || allocations.is_empty() {
+            let value: u8 = rng.gen_range(0..=255);
+            let size = (value as usize + 1) * 4;
+
+            let mut allocation = alloc
+                .allocate(
+                    &ctx.logical_device,
+                    &AllocationDescriptor {
+                        location: MemoryLocation::CpuToGpu,
+                        requirements: vk::MemoryRequirementsBuilder::new()
+                            .alignment(256)
+                            .size(size as u64)
+                            .memory_type_bits(u32::MAX)
+                            .build(),
+                        allocation_type: AllocationType::Buffer,
+                        is_dedicated: false,
+                    },
+                )
+                .unwrap();
+            assert!(size <= allocation.size as usize);
+
+            let slice = allocation.mapped_slice_mut().unwrap();
+            slice.fill(value);
+            allocations.push((value, allocation));
+        } else {
+            let select: usize = rng.gen_range(0..allocations.len());
+            let (value, allocation) = allocations.remove(select);
+            let slice = allocation.mapped_slice().unwrap();
+
+            slice.iter().for_each(|x| {
+                if *x != value {
+                    panic!("After {} iters: {} != {}: {:?}", i, *x, value, slice);
+                }
+            });
+
+            alloc.deallocate(&ctx.logical_device, &allocation).unwrap();
+        }
+    }
     alloc.cleanup(&ctx.logical_device);
 }
