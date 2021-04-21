@@ -24,7 +24,8 @@ fn allocator_creation() {
         &AllocatorDescriptor {
             ..Default::default()
         },
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -34,7 +35,8 @@ fn allocator_simple_free() {
         &ctx.instance,
         ctx.physical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
-    );
+    )
+    .unwrap();
 
     let allocation = alloc
         .allocate(
@@ -72,7 +74,8 @@ fn allocator_allocation_1024() {
         &ctx.instance,
         ctx.physical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
-    );
+    )
+    .unwrap();
 
     let mut allocations: Vec<Allocation> = (0..1024)
         .into_iter()
@@ -129,7 +132,8 @@ fn allocator_allocation_256() {
         &ctx.instance,
         ctx.physical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
-    );
+    )
+    .unwrap();
 
     let mut allocations: Vec<Allocation> = (0..1024)
         .into_iter()
@@ -189,7 +193,8 @@ fn allocator_reverse_free() {
         &ctx.instance,
         ctx.physical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
-    );
+    )
+    .unwrap();
 
     let mut allocations: Vec<Allocation> = (0..1024)
         .into_iter()
@@ -255,7 +260,8 @@ fn allocator_free_every_second_time() {
         &ctx.instance,
         ctx.physical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
-    );
+    )
+    .unwrap();
 
     let allocations: Vec<Allocation> = (0..1024)
         .into_iter()
@@ -315,7 +321,8 @@ fn allocator_allocation_dedicated() {
         &ctx.instance,
         ctx.physical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
-    );
+    )
+    .unwrap();
 
     let allocation = alloc
         .allocate(
@@ -357,7 +364,8 @@ fn allocator_properly_merge_free_entries() {
         &ctx.instance,
         ctx.physical_device,
         &AllocatorDescriptor { block_size: 20 }, // 1 MiB
-    );
+    )
+    .unwrap();
 
     let a0 = alloc
         .allocate(
@@ -435,7 +443,8 @@ fn allocator_fuzzy() {
         &ctx.instance,
         ctx.physical_device,
         &AllocatorDescriptor::default(),
-    );
+    )
+    .unwrap();
 
     let mut allocations: Vec<(u8, Allocation)> = Vec::with_capacity(10_0000);
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0);
@@ -464,13 +473,13 @@ fn allocator_fuzzy() {
                 .unwrap();
             assert!(size <= allocation.size as usize);
 
-            let slice = allocation.mapped_slice_mut().unwrap();
+            let slice = allocation.mapped_slice_mut().unwrap().unwrap();
             slice.fill(value);
             allocations.push((value, allocation));
         } else {
             let select: usize = rng.gen_range(0..allocations.len());
             let (value, allocation) = allocations.remove(select);
-            let slice = allocation.mapped_slice().unwrap();
+            let slice = allocation.mapped_slice().unwrap().unwrap();
 
             slice.iter().for_each(|x| {
                 if *x != value {

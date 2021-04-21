@@ -1,8 +1,11 @@
 #![warn(missing_docs)]
-#![deny(clippy::unwrap_used)]
+#![forbid(unused_results)]
+#![deny(clippy::as_conversions)]
 #![deny(clippy::panic)]
+#![deny(clippy::unwrap_used)]
 
 //! A segregated list memory allocator for Vulkan.
+use std::convert::TryInto;
 use std::ffi::c_void;
 use std::num::NonZeroUsize;
 use std::ptr;
@@ -53,7 +56,7 @@ impl Allocator {
         instance: &erupt::InstanceLoader,
         physical_device: vk::PhysicalDevice,
         descriptor: &AllocatorDescriptor,
-    ) -> Self {
+    ) -> Result<Self> {
         let (driver_id, is_integrated) = query_driver(instance, physical_device);
 
         #[cfg(feature = "tracing")]
@@ -62,47 +65,43 @@ impl Allocator {
         let memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device, None) };
 
-        let memory_types =
-            &memory_properties.memory_types[..memory_properties.memory_type_count as usize];
+        let memory_types_count: usize = (memory_properties.memory_type_count).try_into()?;
+        let memory_types = &memory_properties.memory_types[..memory_types_count];
 
         #[cfg(feature = "tracing")]
-        print_memory_types(memory_properties, memory_types);
+        print_memory_types(memory_properties, memory_types)?;
 
-        let memory_types_size = memory_types.len() as u32;
+        let memory_types_size: u32 = memory_types.len().try_into()?;
 
-        let block_size = (2u64).pow(descriptor.block_size as u32) as vk::DeviceSize;
+        let block_size: vk::DeviceSize = (2u64).pow(descriptor.block_size.into()).into();
 
-        let buffer_pools = memory_types
-            .iter()
-            .enumerate()
-            .map(|(i, memory_type)| {
-                Mutex::new(MemoryPool::new(
-                    i as u32,
-                    block_size,
-                    i,
-                    memory_type
-                        .property_flags
-                        .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
-                ))
-            })
-            .collect();
+        let mut buffer_pools = Vec::with_capacity(memory_types_size.try_into()?);
+        for (memory_type, i) in memory_types.iter().zip(0..memory_types_size) {
+            let pool = MemoryPool::new(
+                i,
+                block_size,
+                i,
+                memory_type
+                    .property_flags
+                    .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
+            )?;
+            buffer_pools.push(Mutex::new(pool));
+        }
 
-        let image_pools = memory_types
-            .iter()
-            .enumerate()
-            .map(|(i, memory_type)| {
-                Mutex::new(MemoryPool::new(
-                    memory_types_size + i as u32,
-                    (2u64).pow(descriptor.block_size as u32) as vk::DeviceSize,
-                    i,
-                    memory_type
-                        .property_flags
-                        .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
-                ))
-            })
-            .collect();
+        let mut image_pools = Vec::with_capacity(memory_types_size.try_into()?);
+        for (memory_type, i) in memory_types.iter().zip(0..memory_types_size) {
+            let pool = MemoryPool::new(
+                memory_types_size + i,
+                (2u64).pow(descriptor.block_size.into()),
+                i,
+                memory_type
+                    .property_flags
+                    .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
+            )?;
+            image_pools.push(Mutex::new(pool));
+        }
 
-        Self {
+        Ok(Self {
             driver_id,
             is_integrated,
             buffer_pools,
@@ -110,7 +109,7 @@ impl Allocator {
             block_size,
             memory_types_size,
             memory_properties,
-        }
+        })
     }
 
     /// Allocates memory for a buffer.
@@ -194,7 +193,7 @@ impl Allocator {
         descriptor: &AllocationDescriptor,
     ) -> Result<Allocation> {
         let size = descriptor.requirements.size;
-        let alignment = descriptor.requirements.alignment as vk::DeviceSize;
+        let alignment = descriptor.requirements.alignment;
 
         #[cfg(feature = "tracing")]
         debug!(
@@ -275,10 +274,10 @@ impl Allocator {
         };
 
         let memory_type_index_optional =
-            self.query_memory_type_index(memory_type_bits, memory_property_flags);
+            self.query_memory_type_index(memory_type_bits, memory_property_flags)?;
 
         if let Some(index) = memory_type_index_optional {
-            return Ok(index as usize);
+            return Ok(index);
         }
 
         // Fallback for drivers that don't expose BAR (Base Address Register).
@@ -295,10 +294,10 @@ impl Allocator {
         };
 
         let memory_type_index_optional =
-            self.query_memory_type_index(memory_type_bits, memory_property_flags);
+            self.query_memory_type_index(memory_type_bits, memory_property_flags)?;
 
         match memory_type_index_optional {
-            Some(index) => Ok(index as usize),
+            Some(index) => Ok(index),
             None => Err(AllocatorError::NoCompatibleMemoryTypeFound),
         }
     }
@@ -307,25 +306,29 @@ impl Allocator {
         &self,
         memory_type_bits: u32,
         memory_property_flags: vk::MemoryPropertyFlags,
-    ) -> Option<u32> {
+    ) -> Result<Option<usize>> {
         let memory_properties = &self.memory_properties;
-        memory_properties.memory_types[..memory_properties.memory_type_count as usize]
+        let memory_type_count: usize = memory_properties.memory_type_count.try_into()?;
+        let index = memory_properties.memory_types[..memory_type_count]
             .iter()
             .enumerate()
             .find(|(index, memory_type)| {
                 memory_type_is_compatible(*index, memory_type_bits)
                     && memory_type.property_flags.contains(memory_property_flags)
             })
-            .map(|(index, _)| index as u32)
+            .map(|(index, _)| index);
+        Ok(index)
     }
 
     /// Frees the allocation.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn deallocate(&self, device: &erupt::DeviceLoader, allocation: &Allocation) -> Result<()> {
         let memory_pool = if allocation.pool_index > self.memory_types_size {
-            &self.image_pools[(allocation.pool_index - self.memory_types_size) as usize]
+            let pool_index: usize = (allocation.pool_index - self.memory_types_size).try_into()?;
+            &self.image_pools[pool_index]
         } else {
-            &self.buffer_pools[allocation.pool_index as usize]
+            let pool_index: usize = allocation.pool_index.try_into()?;
+            &self.buffer_pools[pool_index]
         };
 
         if let Some(chunk_key) = allocation.chunk_key {
@@ -560,32 +563,32 @@ unsafe impl Sync for Allocation {}
 impl Allocation {
     /// Returns a valid mapped slice if the memory is host visible, otherwise it will return None.
     /// The slice already references the exact memory region of the sub allocation, so no offset needs to be applied.
-    pub fn mapped_slice(&self) -> Option<&[u8]> {
-        if let Some(ptr) = self.mapped_ptr {
+    pub fn mapped_slice(&self) -> Result<Option<&[u8]>> {
+        let slice = if let Some(ptr) = self.mapped_ptr {
+            let size = self.size.try_into()?;
+            #[allow(clippy::as_conversions)]
             unsafe {
-                Some(std::slice::from_raw_parts(
-                    ptr.as_ptr() as *const _,
-                    self.size as usize,
-                ))
+                Some(std::slice::from_raw_parts(ptr.as_ptr() as *const _, size))
             }
         } else {
             None
-        }
+        };
+        Ok(slice)
     }
 
     /// Returns a valid mapped mutable slice if the memory is host visible, otherwise it will return None.
     /// The slice already references the exact memory region of the sub allocation, so no offset needs to be applied.
-    pub fn mapped_slice_mut(&mut self) -> Option<&mut [u8]> {
-        if let Some(ptr) = self.mapped_ptr {
+    pub fn mapped_slice_mut(&mut self) -> Result<Option<&mut [u8]>> {
+        let slice = if let Some(ptr) = self.mapped_ptr.as_mut() {
+            let size = self.size.try_into()?;
+            #[allow(clippy::as_conversions)]
             unsafe {
-                Some(std::slice::from_raw_parts_mut(
-                    ptr.as_ptr() as *mut _,
-                    self.size as usize,
-                ))
+                Some(std::slice::from_raw_parts_mut(ptr.as_ptr() as *mut _, size))
             }
         } else {
             None
-        }
+        };
+        Ok(slice)
     }
 }
 
@@ -604,7 +607,7 @@ struct BestFitCandidate {
 struct MemoryPool {
     pool_index: u32,
     block_size: vk::DeviceSize,
-    memory_type_index: usize,
+    memory_type_index: u32,
     is_mappable: bool,
     blocks: Vec<Option<MemoryBlock>>,
     chunks: Vec<Option<MemoryChunk>>,
@@ -620,9 +623,9 @@ impl MemoryPool {
     fn new(
         pool_index: u32,
         block_size: vk::DeviceSize,
-        memory_type_index: usize,
+        memory_type_index: u32,
         is_mappable: bool,
-    ) -> Self {
+    ) -> Result<Self> {
         let mut blocks = Vec::with_capacity(128);
         let mut chunks = Vec::with_capacity(128);
 
@@ -632,24 +635,22 @@ impl MemoryPool {
 
         // The smallest bucket size is 256b, which is log2(256) = 8. So the maximal bucket size is
         // "64 - 8 - log2(block_size - 1)". We can't have a free chunk that is bigger than a block.
-        let num_buckets = 64 - MINIMAL_BUCKET_SIZE_LOG2 - (block_size - 1).leading_zeros();
+        let bucket_count = 64 - MINIMAL_BUCKET_SIZE_LOG2 - (block_size - 1).leading_zeros();
 
         // We preallocate only a reasonable amount of entries for each bucket.
         // The highest bucket for example can only hold two values at most.
-        let free_chunks = (0..num_buckets)
-            .into_iter()
-            .map(|i| {
-                let min_bucket_element_size = if i == 0 {
-                    512
-                } else {
-                    2u64.pow(MINIMAL_BUCKET_SIZE_LOG2 - 1 + i) as vk::DeviceSize
-                };
-                let max_elements = (block_size / min_bucket_element_size) as usize;
-                Vec::with_capacity(512.min(max_elements))
-            })
-            .collect();
+        let mut free_chunks = Vec::with_capacity(bucket_count.try_into()?);
+        for i in 0..bucket_count {
+            let min_bucket_element_size = if i == 0 {
+                512
+            } else {
+                2u64.pow(MINIMAL_BUCKET_SIZE_LOG2 - 1 + i).into()
+            };
+            let max_elements: usize = (block_size / min_bucket_element_size).try_into()?;
+            free_chunks.push(Vec::with_capacity(512.min(max_elements)));
+        }
 
-        Self {
+        Ok(Self {
             pool_index,
             block_size,
             memory_type_index,
@@ -659,8 +660,8 @@ impl MemoryPool {
             free_chunks,
             free_block_slots: Vec::with_capacity(16),
             free_chunk_slots: Vec::with_capacity(16),
-            max_bucket_index: num_buckets - 1,
-        }
+            max_bucket_index: bucket_count - 1,
+        })
     }
 
     fn add_block(&mut self, block: MemoryBlock) -> NonZeroUsize {
@@ -726,7 +727,8 @@ impl MemoryPool {
                 bucket_index = self.max_bucket_index;
             }
 
-            let free_list = &self.free_chunks[bucket_index as usize];
+            let index: usize = bucket_index.try_into()?;
+            let free_list = &self.free_chunks[index];
 
             // Find best fit in this bucket.
             let mut best_fit_candidate: Option<BestFitCandidate> = None;
@@ -742,7 +744,7 @@ impl MemoryPool {
 
                 let offset = align_up(chunk.offset, alignment);
                 let padding = offset - chunk.offset;
-                let aligned_size = (padding + size) as vk::DeviceSize;
+                let aligned_size = (padding + size).into();
 
                 // Try to find the best fitting chunk.
                 if chunk.size >= aligned_size {
@@ -751,7 +753,7 @@ impl MemoryPool {
                     let best_fit_size = if let Some(best_fit) = &best_fit_candidate {
                         best_fit.free_size
                     } else {
-                        u64::MAX as vk::DeviceSize
+                        u64::MAX
                     };
 
                     if free_size < best_fit_size {
@@ -766,7 +768,11 @@ impl MemoryPool {
 
             // Allocate using the best fit candidate.
             if let Some(candidate) = &best_fit_candidate {
-                self.free_chunks[bucket_index as usize].remove(candidate.free_list_index);
+                let _ = self
+                    .free_chunks
+                    .get_mut(index)
+                    .ok_or_else(|| AllocatorError::Internal("can't find free chunk".to_owned()))?
+                    .remove(candidate.free_list_index);
 
                 // Split the lhs chunk and register the rhs as a new free chunk.
                 let new_free_chunk_key = if candidate.free_size != 0 {
@@ -793,8 +799,9 @@ impl MemoryPool {
 
                     let new_free_chunk_key = self.add_chunk(new_free_chunk);
 
-                    let rhs_bucket_index = calculate_bucket_index(new_free_size);
-                    self.free_chunks[rhs_bucket_index as usize].push(new_free_chunk_key);
+                    let rhs_bucket_index: usize =
+                        calculate_bucket_index(new_free_size).try_into()?;
+                    self.free_chunks[rhs_bucket_index].push(new_free_chunk_key);
 
                     Some(new_free_chunk_key)
                 } else {
@@ -813,8 +820,8 @@ impl MemoryPool {
                     .expect("can't find block in block list");
 
                 let mapped_ptr = if !block.mapped_ptr.is_null() {
-                    let offset_ptr =
-                        unsafe { block.mapped_ptr.add(candidate_chunk.offset as usize) };
+                    let offset: usize = candidate_chunk.offset.try_into()?;
+                    let offset_ptr = unsafe { block.mapped_ptr.add(offset) };
                     std::ptr::NonNull::new(offset_ptr)
                 } else {
                     None
@@ -875,7 +882,8 @@ impl MemoryPool {
 
         let chunk_key = self.add_chunk(chunk);
 
-        self.free_chunks[self.max_bucket_index as usize].push(chunk_key);
+        let index: usize = self.max_bucket_index.try_into()?;
+        self.free_chunks[index].push(chunk_key);
 
         Ok(())
     }
@@ -888,10 +896,10 @@ impl MemoryPool {
             chunk.is_free = true;
             (chunk.previous, chunk.next, chunk.size)
         };
-        self.add_to_free_list(chunk_key, size);
+        self.add_to_free_list(chunk_key, size)?;
 
-        self.merge_free_neighbor(next_key, chunk_key, false);
-        self.merge_free_neighbor(previous_key, chunk_key, true);
+        self.merge_free_neighbor(next_key, chunk_key, false)?;
+        self.merge_free_neighbor(previous_key, chunk_key, true)?;
 
         Ok(())
     }
@@ -901,7 +909,7 @@ impl MemoryPool {
         neighbor: Option<NonZeroUsize>,
         chunk_key: NonZeroUsize,
         neighbor_is_lhs: bool,
-    ) {
+    ) -> Result<()> {
         if let Some(neighbor_key) = neighbor {
             if self.chunks[neighbor_key.get()]
                 .as_ref()
@@ -909,19 +917,20 @@ impl MemoryPool {
                 .is_free
             {
                 if neighbor_is_lhs {
-                    self.merge_rhs_into_lhs_chunk(neighbor_key, chunk_key);
+                    self.merge_rhs_into_lhs_chunk(neighbor_key, chunk_key)?;
                 } else {
-                    self.merge_rhs_into_lhs_chunk(chunk_key, neighbor_key);
+                    self.merge_rhs_into_lhs_chunk(chunk_key, neighbor_key)?;
                 }
             }
         }
+        Ok(())
     }
 
     fn merge_rhs_into_lhs_chunk(
         &mut self,
         lhs_chunk_key: NonZeroUsize,
         rhs_chunk_key: NonZeroUsize,
-    ) {
+    ) -> Result<()> {
         let (rhs_size, rhs_offset, rhs_next) = {
             let chunk = self.chunks[rhs_chunk_key.get()]
                 .take()
@@ -929,7 +938,7 @@ impl MemoryPool {
             self.free_chunk_slots.push(rhs_chunk_key);
             debug_assert!(chunk.previous == Some(lhs_chunk_key));
 
-            self.remove_from_free_list(rhs_chunk_key, chunk.size);
+            self.remove_from_free_list(rhs_chunk_key, chunk.size)?;
 
             (chunk.size, chunk.offset, chunk.next)
         };
@@ -947,8 +956,8 @@ impl MemoryPool {
 
         let new_size = lhs_chunk.size;
 
-        self.remove_from_free_list(lhs_chunk_key, old_size);
-        self.add_to_free_list(lhs_chunk_key, new_size);
+        self.remove_from_free_list(lhs_chunk_key, old_size)?;
+        self.add_to_free_list(lhs_chunk_key, new_size)?;
 
         if let Some(rhs_next) = rhs_next {
             let chunk = self.chunks[rhs_next.get()]
@@ -956,6 +965,8 @@ impl MemoryPool {
                 .expect("previous memory chunk was None");
             chunk.previous = Some(lhs_chunk_key);
         }
+
+        Ok(())
     }
 
     fn free_block(&mut self, device: &erupt::DeviceLoader, block_key: NonZeroUsize) -> Result<()> {
@@ -970,20 +981,26 @@ impl MemoryPool {
         Ok(())
     }
 
-    fn add_to_free_list(&mut self, chunk_key: NonZeroUsize, size: vk::DeviceSize) {
-        let chunk_bucket_index = calculate_bucket_index(size);
-        self.free_chunks[chunk_bucket_index as usize].push(chunk_key);
+    fn add_to_free_list(&mut self, chunk_key: NonZeroUsize, size: vk::DeviceSize) -> Result<()> {
+        let chunk_bucket_index: usize = calculate_bucket_index(size).try_into()?;
+        self.free_chunks[chunk_bucket_index].push(chunk_key);
+        Ok(())
     }
 
-    fn remove_from_free_list(&mut self, chunk_key: NonZeroUsize, chunk_size: vk::DeviceSize) {
-        let bucket_index = calculate_bucket_index(chunk_size);
-        let free_list_index = self.free_chunks[bucket_index as usize]
+    fn remove_from_free_list(
+        &mut self,
+        chunk_key: NonZeroUsize,
+        chunk_size: vk::DeviceSize,
+    ) -> Result<()> {
+        let bucket_index: usize = calculate_bucket_index(chunk_size).try_into()?;
+        let free_list_index = self.free_chunks[bucket_index]
             .iter()
             .enumerate()
             .find(|(_, key)| **key == chunk_key)
             .map(|(index, _)| index)
             .expect("can't find chunk in chunk list");
-        self.free_chunks[bucket_index as usize].remove(free_list_index);
+        let _ = self.free_chunks[bucket_index].remove(free_list_index);
+        Ok(())
     }
 }
 
@@ -1014,7 +1031,7 @@ impl MemoryBlock {
     fn new(
         device: &erupt::DeviceLoader,
         size: vk::DeviceSize,
-        memory_type_index: usize,
+        memory_type_index: u32,
         is_mappable: bool,
         is_dedicated: bool,
     ) -> Result<Self> {
@@ -1022,7 +1039,7 @@ impl MemoryBlock {
         let device_memory = {
             let alloc_info = vk::MemoryAllocateInfoBuilder::new()
                 .allocation_size(size)
-                .memory_type_index(memory_type_index as u32);
+                .memory_type_index(memory_type_index);
 
             let allocation_flags = vk::MemoryAllocateFlags::DEVICE_ADDRESS;
             let mut flags_info = vk::MemoryAllocateFlagsInfoBuilder::new().flags(allocation_flags);
@@ -1046,13 +1063,7 @@ impl MemoryBlock {
         if is_mappable {
             unsafe {
                 if device
-                    .map_memory(
-                        device_memory,
-                        0,
-                        vk::WHOLE_SIZE as vk::DeviceSize,
-                        None,
-                        &mut mapped_ptr,
-                    )
+                    .map_memory(device_memory, 0, vk::WHOLE_SIZE, None, &mut mapped_ptr)
                     .is_err()
                 {
                     device.free_memory(Some(device_memory), None);
@@ -1113,16 +1124,17 @@ fn memory_type_is_compatible(memory_type_index: usize, memory_type_bits: u32) ->
 fn print_memory_types(
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     memory_types: &[vk::MemoryType],
-) {
+) -> Result<()> {
     info!("Physical device memory heaps:");
     for heap_index in 0..memory_properties.memory_heap_count {
+        let index: usize = heap_index.try_into()?;
         info!(
             "Heap {}: {:?}",
-            heap_index, memory_properties.memory_heaps[heap_index as usize].flags
+            heap_index, memory_properties.memory_heaps[index].flags
         );
         info!(
             "\tSize = {} MiB",
-            memory_properties.memory_heaps[heap_index as usize].size / (1024 * 1024)
+            memory_properties.memory_heaps[index].size / (1024 * 1024)
         );
         for (type_index, memory_type) in memory_types
             .iter()
@@ -1132,6 +1144,7 @@ fn print_memory_types(
             info!("\tType {}: {:?}", type_index, memory_type.property_flags);
         }
     }
+    Ok(())
 }
 
 #[inline]

@@ -1,8 +1,12 @@
 //! Crate errors.
 
+use std::error::Error;
+
 /// Errors that the allocators can throw.
 #[derive(Debug, Eq, PartialEq)]
 pub enum AllocatorError {
+    /// A `TryFromIntError`.
+    TryFromIntError(std::num::TryFromIntError),
     /// General out of memory error.
     OutOfMemory,
     /// Failed to map the memory.
@@ -24,6 +28,9 @@ pub enum AllocatorError {
 impl std::fmt::Display for AllocatorError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            AllocatorError::TryFromIntError(err) => {
+                write!(f, "{:?}", err.source())
+            }
             AllocatorError::OutOfMemory => {
                 write!(f, "out of memory")
             }
@@ -52,8 +59,17 @@ impl std::fmt::Display for AllocatorError {
     }
 }
 
+impl From<std::num::TryFromIntError> for AllocatorError {
+    fn from(err: std::num::TryFromIntError) -> AllocatorError {
+        AllocatorError::TryFromIntError(err)
+    }
+}
+
 impl std::error::Error for AllocatorError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        None
+        match *self {
+            AllocatorError::TryFromIntError(ref e) => Some(e),
+            _ => None,
+        }
     }
 }
