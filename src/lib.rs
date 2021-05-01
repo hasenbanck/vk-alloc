@@ -1,5 +1,4 @@
 #![warn(missing_docs)]
-#![forbid(unused_results)]
 #![deny(clippy::as_conversions)]
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
@@ -768,8 +767,7 @@ impl MemoryPool {
 
             // Allocate using the best fit candidate.
             if let Some(candidate) = &best_fit_candidate {
-                let _ = self
-                    .free_chunks
+                self.free_chunks
                     .get_mut(index)
                     .ok_or_else(|| AllocatorError::Internal("can't find free chunk".to_owned()))?
                     .remove(candidate.free_list_index);
@@ -999,7 +997,7 @@ impl MemoryPool {
             .find(|(_, key)| **key == chunk_key)
             .map(|(index, _)| index)
             .expect("can't find chunk in chunk list");
-        let _ = self.free_chunks[bucket_index].remove(free_list_index);
+        self.free_chunks[bucket_index].remove(free_list_index);
         Ok(())
     }
 }
