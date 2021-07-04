@@ -27,7 +27,7 @@ pub struct VulkanContext {
     debug_messenger: vk::DebugUtilsMessengerEXT,
     pub logical_device: erupt::DeviceLoader,
     pub instance: erupt::InstanceLoader,
-    _entry: erupt::DefaultEntryLoader,
+    _entry: erupt::EntryLoader,
 
     pub physical_device: vk::PhysicalDevice,
     pub queue: vk::Queue,
@@ -60,9 +60,9 @@ impl VulkanContext {
 
         let app_info = vk::ApplicationInfoBuilder::new()
             .application_name(&app_name)
-            .application_version(vk::make_version(0, 1, 0))
+            .application_version(vk::make_api_version(0, 0, 1, 0))
             .engine_name(&engine_name)
-            .engine_version(vk::make_version(0, 1, 0))
+            .engine_version(vk::make_api_version(0, 0, 1, 0))
             .api_version(api_version);
 
         let extensions = Self::create_instance_extensions(&entry);
@@ -71,7 +71,7 @@ impl VulkanContext {
         let (physical_device, logical_device, queue) = Self::request_device(&instance);
 
         let physical_device_properties =
-            unsafe { instance.get_physical_device_properties(physical_device, None) };
+            unsafe { instance.get_physical_device_properties(physical_device) };
 
         let buffer_image_granularity = physical_device_properties.limits.buffer_image_granularity;
 
@@ -102,9 +102,7 @@ impl VulkanContext {
         }
     }
 
-    fn create_instance_extensions(
-        entry: &erupt::DefaultEntryLoader,
-    ) -> Vec<*const std::os::raw::c_char> {
+    fn create_instance_extensions(entry: &erupt::EntryLoader) -> Vec<*const std::os::raw::c_char> {
         let instance_extensions = unsafe {
             entry
                 .enumerate_instance_extension_properties(None, None)
@@ -132,7 +130,7 @@ impl VulkanContext {
         extensions
     }
 
-    fn create_layers(entry: &erupt::DefaultEntryLoader) -> Vec<*const std::os::raw::c_char> {
+    fn create_layers(entry: &erupt::EntryLoader) -> Vec<*const std::os::raw::c_char> {
         let instance_layers = unsafe { entry.enumerate_instance_layer_properties(None) }.unwrap();
 
         let mut layers = Vec::new();
@@ -154,7 +152,7 @@ impl VulkanContext {
     }
 
     fn create_instance(
-        entry: &erupt::DefaultEntryLoader,
+        entry: &erupt::EntryLoader,
         app_info: &vk::ApplicationInfoBuilder,
         extensions: &[*const c_char],
         layers: &[*const c_char],
@@ -165,7 +163,7 @@ impl VulkanContext {
             .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions);
 
-        erupt::InstanceLoader::new(&entry, &create_info, None).unwrap()
+        unsafe { erupt::InstanceLoader::new(&entry, &create_info, None) }.unwrap()
     }
 
     #[cfg(feature = "tracing")]
@@ -175,7 +173,7 @@ impl VulkanContext {
             .message_type(vk::DebugUtilsMessageTypeFlagsEXT::all())
             .pfn_user_callback(Some(debug_utils_callback));
 
-        unsafe { instance.create_debug_utils_messenger_ext(&info, None, None) }.unwrap()
+        unsafe { instance.create_debug_utils_messenger_ext(&info, None) }.unwrap()
     }
 
     fn request_device(
@@ -185,7 +183,7 @@ impl VulkanContext {
 
         let mut chosen = None;
         for device in physical_devices {
-            let properties = unsafe { instance.get_physical_device_properties(device, None) };
+            let properties = unsafe { instance.get_physical_device_properties(device) };
 
             if properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU
                 || properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU
@@ -214,7 +212,7 @@ impl VulkanContext {
             .queue_family_index(transfer_queue_family_id)
             .queue_priorities(&[1.0])];
         let logical_device = Self::create_device(instance, physical_device, &queue_infos);
-        let queue = unsafe { logical_device.get_device_queue(transfer_queue_family_id, 0, None) };
+        let queue = unsafe { logical_device.get_device_queue(transfer_queue_family_id, 0) };
 
         (logical_device, queue)
     }
@@ -252,7 +250,8 @@ impl VulkanContext {
             .queue_create_infos(queue_infos)
             .enabled_extension_names(&device_extensions);
 
-        erupt::DeviceLoader::new(instance, physical_device, &device_create_info, None).unwrap()
+        unsafe { erupt::DeviceLoader::new(instance, physical_device, &device_create_info, None) }
+            .unwrap()
     }
 
     fn create_device_extensions(

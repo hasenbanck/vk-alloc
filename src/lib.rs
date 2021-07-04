@@ -9,7 +9,7 @@ use std::ffi::c_void;
 use std::num::NonZeroUsize;
 use std::ptr;
 
-use erupt::{vk, ExtendableFrom};
+use erupt::{vk, ExtendableFromMut};
 use parking_lot::Mutex;
 #[cfg(feature = "tracing")]
 use tracing::{debug, info};
@@ -62,7 +62,7 @@ impl Allocator {
         debug!("Driver ID of the physical device: {:?}", driver_id);
 
         let memory_properties =
-            unsafe { instance.get_physical_device_memory_properties(physical_device, None) };
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
 
         let memory_types_count: usize = (memory_properties.memory_type_count).try_into()?;
         let memory_types = &memory_properties.memory_types[..memory_types_count];
@@ -1043,7 +1043,7 @@ impl MemoryBlock {
             let mut flags_info = vk::MemoryAllocateFlagsInfoBuilder::new().flags(allocation_flags);
             let alloc_info = alloc_info.extend_from(&mut flags_info);
 
-            unsafe { device.allocate_memory(&alloc_info, None, None) }
+            unsafe { device.allocate_memory(&alloc_info, None) }
                 .map_err(|_| AllocatorError::OutOfMemory)?
         };
 
@@ -1053,7 +1053,7 @@ impl MemoryBlock {
                 .allocation_size(size)
                 .memory_type_index(memory_type_index as u32);
 
-            unsafe { device.allocate_memory(&alloc_info, None, None) }
+            unsafe { device.allocate_memory(&alloc_info, None) }
                 .map_err(|_| AllocatorError::OutOfMemory)?
         };
 

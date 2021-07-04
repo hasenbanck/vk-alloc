@@ -12,12 +12,12 @@ pub mod fixture;
 
 #[test]
 fn vulkan_context_creation() {
-    fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
 }
 
 #[test]
 fn allocator_creation() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
     Allocator::new(
         &ctx.instance,
         ctx.physical_device,
@@ -30,7 +30,7 @@ fn allocator_creation() {
 
 #[test]
 fn allocator_simple_free() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
@@ -69,7 +69,7 @@ fn allocator_simple_free() {
 
 #[test]
 fn allocator_allocation_1024() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
@@ -127,7 +127,7 @@ fn allocator_allocation_1024() {
 
 #[test]
 fn allocator_allocation_256() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
@@ -188,7 +188,7 @@ fn allocator_allocation_256() {
 
 #[test]
 fn allocator_reverse_free() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
@@ -255,7 +255,7 @@ fn allocator_reverse_free() {
 
 #[test]
 fn allocator_free_every_second_time() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
@@ -316,7 +316,7 @@ fn allocator_free_every_second_time() {
 
 #[test]
 fn allocator_allocation_dedicated() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
@@ -359,7 +359,7 @@ fn allocator_allocation_dedicated() {
 
 #[test]
 fn allocator_properly_merge_free_entries() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
@@ -438,7 +438,7 @@ fn allocator_properly_merge_free_entries() {
 
 #[test]
 fn allocator_fuzzy() {
-    let ctx = fixture::VulkanContext::new(vk::make_version(1, 2, 0));
+    let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
     let mut alloc = Allocator::new(
         &ctx.instance,
         ctx.physical_device,
