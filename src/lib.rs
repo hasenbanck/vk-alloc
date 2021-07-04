@@ -1035,6 +1035,8 @@ impl MemoryBlock {
     ) -> Result<Self> {
         #[cfg(feature = "vk-buffer-device-address")]
         let device_memory = {
+            use erupt::ExtendableFromConst;
+
             let alloc_info = vk::MemoryAllocateInfoBuilder::new()
                 .allocation_size(size)
                 .memory_type_index(memory_type_index);
