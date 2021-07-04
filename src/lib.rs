@@ -12,7 +12,7 @@ use std::ptr;
 use erupt::{vk, ExtendableFromMut};
 use parking_lot::Mutex;
 #[cfg(feature = "tracing")]
-use tracing::{debug, info};
+use tracing1::{debug, info};
 
 pub use error::AllocatorError;
 

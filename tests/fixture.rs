@@ -3,7 +3,7 @@ use std::os::raw::c_char;
 
 use erupt::{cstr, vk};
 #[cfg(feature = "tracing")]
-use tracing::{debug, info};
+use tracing1::{debug, info};
 
 #[cfg(feature = "tracing")]
 pub fn initialize_logging() {
