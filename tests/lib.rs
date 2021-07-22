@@ -503,3 +503,5 @@ fn allocator_fuzzy() {
     }
     alloc.cleanup(&ctx.logical_device);
 }
+
+// TODO write a test that tests the buffer / image granularity

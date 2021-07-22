@@ -41,11 +41,11 @@ impl Default for AllocatorDescriptor {
 pub struct Allocator {
     driver_id: vk::DriverId,
     is_integrated: bool,
-    buffer_pools: Vec<Mutex<MemoryPool>>,
-    image_pools: Vec<Mutex<MemoryPool>>,
+    pools: Vec<Mutex<MemoryPool>>,
     block_size: vk::DeviceSize,
     memory_types_size: u32,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
+    buffer_image_granularity: u64,
 }
 
 impl Allocator {
@@ -56,7 +56,8 @@ impl Allocator {
         physical_device: vk::PhysicalDevice,
         descriptor: &AllocatorDescriptor,
     ) -> Result<Self> {
-        let (driver_id, is_integrated) = query_driver(instance, physical_device);
+        let (driver_id, is_integrated, buffer_image_granularity) =
+            query_driver(instance, physical_device);
 
         #[cfg(feature = "tracing")]
         debug!("Driver ID of the physical device: {:?}", driver_id);
@@ -74,7 +75,7 @@ impl Allocator {
 
         let block_size: vk::DeviceSize = (2u64).pow(descriptor.block_size.into()).into();
 
-        let mut buffer_pools = Vec::with_capacity(memory_types_size.try_into()?);
+        let mut pools = Vec::with_capacity(memory_types_size.try_into()?);
         for (memory_type, i) in memory_types.iter().zip(0..memory_types_size) {
             let pool = MemoryPool::new(
                 i,
@@ -84,30 +85,17 @@ impl Allocator {
                     .property_flags
                     .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
             )?;
-            buffer_pools.push(Mutex::new(pool));
-        }
-
-        let mut image_pools = Vec::with_capacity(memory_types_size.try_into()?);
-        for (memory_type, i) in memory_types.iter().zip(0..memory_types_size) {
-            let pool = MemoryPool::new(
-                memory_types_size + i,
-                (2u64).pow(descriptor.block_size.into()),
-                i,
-                memory_type
-                    .property_flags
-                    .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
-            )?;
-            image_pools.push(Mutex::new(pool));
+            pools.push(Mutex::new(pool));
         }
 
         Ok(Self {
             driver_id,
             is_integrated,
-            buffer_pools,
-            image_pools,
+            pools,
             block_size,
             memory_types_size,
             memory_properties,
+            buffer_image_granularity,
         })
     }
 
@@ -199,12 +187,7 @@ impl Allocator {
             descriptor.requirements.memory_type_bits,
         )?;
 
-        let pool = match descriptor.allocation_type {
-            AllocationType::Buffer | AllocationType::LinearImage => {
-                &self.buffer_pools[memory_type_index]
-            }
-            AllocationType::OptimalImage => &self.image_pools[memory_type_index],
-        };
+        let pool = &self.pools[memory_type_index];
 
         if descriptor.is_dedicated || size >= self.block_size {
             #[cfg(feature = "tracing")]
@@ -216,8 +199,13 @@ impl Allocator {
         } else {
             #[cfg(feature = "tracing")]
             debug!("Sub allocating on memory type {}", memory_type_index);
-            pool.lock()
-                .allocate(device, size, alignment, descriptor.is_optimal)
+            pool.lock().allocate(
+                device,
+                self.buffer_image_granularity,
+                size,
+                alignment,
+                descriptor.is_optimal,
+            )
         }
     }
 
@@ -313,13 +301,8 @@ impl Allocator {
     /// Frees the allocation.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn deallocate(&self, device: &erupt::DeviceLoader, allocation: &Allocation) -> Result<()> {
-        let memory_pool = if allocation.pool_index > self.memory_types_size {
-            let pool_index: usize = (allocation.pool_index - self.memory_types_size).try_into()?;
-            &self.image_pools[pool_index]
-        } else {
-            let pool_index: usize = allocation.pool_index.try_into()?;
-            &self.buffer_pools[pool_index]
-        };
+        let pool_index: usize = allocation.pool_index.try_into()?;
+        let memory_pool: &Mutex<MemoryPool> = &self.pools[pool_index];
 
         if let Some(chunk_key) = allocation.chunk_key {
             #[cfg(feature = "tracing")]
@@ -346,14 +329,7 @@ impl Allocator {
     /// Releases all memory blocks back to the system. Should be called before drop.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn cleanup(&mut self, device: &erupt::DeviceLoader) {
-        self.buffer_pools.drain(..).for_each(|pool| {
-            pool.lock().blocks.iter_mut().for_each(|block| {
-                if let Some(block) = block {
-                    block.destroy(&device)
-                }
-            })
-        });
-        self.image_pools.drain(..).for_each(|pool| {
+        self.pools.drain(..).for_each(|pool| {
             pool.lock().blocks.iter_mut().for_each(|block| {
                 if let Some(block) = block {
                     block.destroy(&device)
@@ -364,134 +340,130 @@ impl Allocator {
 
     /// Number of allocations.
     pub fn allocation_count(&self) -> usize {
-        let mut buffer_count = 0;
-        for pool in &self.buffer_pools {
+        let mut count = 0;
+        for pool in &self.pools {
             let pool = pool.lock();
             for chunk in &pool.chunks {
                 if let Some(chunk) = chunk {
                     if chunk.chunk_type != ChunkType::Free {
-                        buffer_count += 1;
+                        count += 1;
                     }
                 }
             }
         }
 
-        let mut image_count = 0;
-        for pool in &self.image_pools {
-            let pool = pool.lock();
-            for chunk in &pool.chunks {
-                if let Some(chunk) = chunk {
-                    if chunk.chunk_type != ChunkType::Free {
-                        image_count += 1;
-                    }
-                }
-            }
-        }
-
-        let mut dedicated_buffer_count = 0;
-        for pool in &self.buffer_pools {
+        for pool in &self.pools {
             let pool = pool.lock();
             for block in &pool.blocks {
                 if let Some(block) = block {
                     if block.is_dedicated {
-                        dedicated_buffer_count += 1;
+                        count += 1;
                     }
                 }
             }
         }
 
-        let mut dedicated_image_count = 0;
-        for pool in &self.image_pools {
-            let pool = pool.lock();
-            for block in &pool.blocks {
-                if let Some(block) = block {
-                    if block.is_dedicated {
-                        dedicated_image_count += 1;
-                    }
-                }
-            }
-        }
-
-        buffer_count + image_count + dedicated_buffer_count + dedicated_image_count
+        count
     }
 
     /// Number of unused ranges between allocations.
     pub fn unused_range_count(&self) -> usize {
-        count_unused_ranges(&self.buffer_pools) + count_unused_ranges(&self.image_pools)
+        let mut unused_count: usize = 0;
+
+        self.pools.iter().for_each(|pool| {
+            collect_start_chunks(pool).iter().for_each(|key| {
+                let mut next_key: NonZeroUsize = *key;
+                let mut previous_size: vk::DeviceSize = 0;
+                let mut previous_offset: vk::DeviceSize = 0;
+                loop {
+                    let pool = pool.lock();
+                    let chunk = pool.chunks[next_key.get()]
+                        .as_ref()
+                        .expect("can't find chunk in chunk list");
+                    if chunk.offset != previous_offset + previous_size {
+                        unused_count += 1;
+                    }
+
+                    if let Some(key) = chunk.next {
+                        next_key = key
+                    } else {
+                        break;
+                    }
+
+                    previous_size = chunk.size;
+                    previous_offset = chunk.offset
+                }
+            });
+        });
+
+        unused_count
     }
 
     /// Number of bytes used by the allocations.
     pub fn used_bytes(&self) -> vk::DeviceSize {
-        let mut buffer_bytes = 0;
-        for pool in &self.buffer_pools {
+        let mut bytes = 0;
+
+        for pool in &self.pools {
             let pool = pool.lock();
             for chunk in &pool.chunks {
                 if let Some(chunk) = chunk {
                     if chunk.chunk_type != ChunkType::Free {
-                        buffer_bytes += chunk.size;
+                        bytes += chunk.size;
                     }
                 }
             }
         }
 
-        let mut image_bytes = 0;
-        for pool in &self.image_pools {
-            let pool = pool.lock();
-            for chunk in &pool.chunks {
-                if let Some(chunk) = chunk {
-                    if chunk.chunk_type != ChunkType::Free {
-                        image_bytes += chunk.size;
-                    }
-                }
-            }
-        }
-
-        let mut dedicated_buffer_bytes = 0;
-        for pool in &self.buffer_pools {
+        for pool in &self.pools {
             let pool = pool.lock();
             for block in &pool.blocks {
                 if let Some(block) = block {
                     if block.is_dedicated {
-                        dedicated_buffer_bytes += block.size;
+                        bytes += block.size;
                     }
                 }
             }
         }
 
-        let mut dedicated_image_bytes = 0;
-        for pool in &self.image_pools {
-            let pool = pool.lock();
-            for block in &pool.blocks {
-                if let Some(block) = block {
-                    if block.is_dedicated {
-                        dedicated_image_bytes += block.size;
-                    }
-                }
-            }
-        }
-
-        buffer_bytes + image_bytes + dedicated_buffer_bytes + dedicated_image_bytes
+        bytes
     }
 
     /// Number of bytes used by the unused ranges between allocations.
     pub fn unused_bytes(&self) -> vk::DeviceSize {
-        count_unused_bytes(&self.buffer_pools) + count_unused_bytes(&self.image_pools)
+        let mut unused_bytes: vk::DeviceSize = 0;
+
+        self.pools.iter().for_each(|pool| {
+            collect_start_chunks(pool).iter().for_each(|key| {
+                let mut next_key: NonZeroUsize = *key;
+                let mut previous_size: vk::DeviceSize = 0;
+                let mut previous_offset: vk::DeviceSize = 0;
+                loop {
+                    let pool = pool.lock();
+                    let chunk = pool.chunks[next_key.get()]
+                        .as_ref()
+                        .expect("can't find chunk in chunk list");
+                    if chunk.offset != previous_offset + previous_size {
+                        unused_bytes += chunk.offset - (previous_offset + previous_size);
+                    }
+
+                    if let Some(key) = chunk.next {
+                        next_key = key
+                    } else {
+                        break;
+                    }
+
+                    previous_size = chunk.size;
+                    previous_offset = chunk.offset
+                }
+            });
+        });
+
+        unused_bytes
     }
 
     /// Number of allocated Vulkan memory blocks.
     pub fn block_count(&self) -> usize {
-        let buffer_sum: usize = self
-            .buffer_pools
-            .iter()
-            .map(|pool| pool.lock().blocks.len())
-            .sum();
-        let image_sum: usize = self
-            .image_pools
-            .iter()
-            .map(|pool| pool.lock().blocks.len())
-            .sum();
-
-        buffer_sum + image_sum
+        self.pools.iter().map(|pool| pool.lock().blocks.len()).sum()
     }
 }
 
@@ -517,6 +489,19 @@ enum ChunkType {
     Free,
     Linear,
     Optimal,
+}
+
+impl ChunkType {
+    /// There is an implementation-dependent limit, bufferImageGranularity, which specifies a
+    /// page-like granularity at which linear and non-linear resources must be placed in adjacent
+    /// memory locations to avoid aliasing.
+    fn granularity_conflict(self, other: ChunkType) -> bool {
+        if self == ChunkType::Free || other == ChunkType::Free {
+            return false;
+        }
+
+        self != other
+    }
 }
 
 /// The intended location of the memory.
@@ -718,6 +703,7 @@ impl MemoryPool {
     fn allocate(
         &mut self,
         device: &erupt::DeviceLoader,
+        buffer_image_granularity: u64,
         size: vk::DeviceSize,
         alignment: vk::DeviceSize,
         is_optimal: bool,
@@ -726,6 +712,12 @@ impl MemoryPool {
 
         // Make sure that we don't try to allocate a chunk bigger than the block.
         debug_assert!(bucket_index <= self.max_bucket_index);
+
+        let chunk_type = if is_optimal {
+            ChunkType::Optimal
+        } else {
+            ChunkType::Linear
+        };
 
         loop {
             // We couldn't find a suitable empty chunk, so we will allocate a new block.
@@ -749,7 +741,49 @@ impl MemoryPool {
                     continue;
                 }
 
-                let offset = align_up(chunk.offset, alignment);
+                let mut offset = align_up(chunk.offset, alignment);
+
+                // We need to handle the granularity between chunks. See "Buffer-Image Granularity"
+                // in the Vulkan specs.
+                if let Some(previous) = chunk.previous {
+                    let previous = self
+                        .chunks
+                        .get(previous.get())
+                        .ok_or_else(|| {
+                            AllocatorError::Internal("can't find previous chunk".into())
+                        })?
+                        .as_ref()
+                        .ok_or_else(|| {
+                            AllocatorError::Internal("previous chunk was empty".into())
+                        })?;
+
+                    if previous.chunk_type.granularity_conflict(chunk_type)
+                        && is_on_same_page(
+                            previous.offset,
+                            previous.size,
+                            offset,
+                            buffer_image_granularity,
+                        )
+                    {
+                        offset = align_up(offset, buffer_image_granularity);
+                    }
+                }
+
+                if let Some(next) = chunk.next {
+                    let next = self
+                        .chunks
+                        .get(next.get())
+                        .ok_or_else(|| AllocatorError::Internal("can't find next chunk".into()))?
+                        .as_ref()
+                        .ok_or_else(|| AllocatorError::Internal("next chunk was empty".into()))?;
+
+                    if next.chunk_type.granularity_conflict(chunk_type)
+                        && is_on_same_page(next.offset, next.size, offset, buffer_image_granularity)
+                    {
+                        continue;
+                    }
+                }
+
                 let padding = offset - chunk.offset;
                 let aligned_size = (padding + size).into();
 
@@ -817,11 +851,7 @@ impl MemoryPool {
                 let candidate_chunk = self.chunks[candidate.key.get()]
                     .as_mut()
                     .expect("can't find chunk in chunk list");
-                candidate_chunk.chunk_type = if is_optimal {
-                    ChunkType::Optimal
-                } else {
-                    ChunkType::Linear
-                };
+                candidate_chunk.chunk_type = chunk_type;
                 candidate_chunk.offset = align_up(candidate_chunk.offset, alignment);
                 candidate_chunk.size = size;
 
@@ -1108,10 +1138,24 @@ fn align_up(offset: vk::DeviceSize, alignment: vk::DeviceSize) -> vk::DeviceSize
     (offset + (alignment - 1)) & !(alignment - 1)
 }
 
+#[inline]
+fn align_down(offset: vk::DeviceSize, alignment: vk::DeviceSize) -> vk::DeviceSize {
+    offset & !(alignment - 1)
+}
+
+fn is_on_same_page(offset_a: u64, size_a: u64, offset_b: u64, page_size: u64) -> bool {
+    let end_a = offset_a + size_a - 1;
+    let end_page_a = align_down(end_a, page_size);
+    let start_b = offset_b;
+    let start_page_b = align_down(start_b, page_size);
+
+    end_page_a == start_page_b
+}
+
 fn query_driver(
     instance: &erupt::InstanceLoader,
     physical_device: vk::PhysicalDevice,
-) -> (vk::DriverId, bool) {
+) -> (vk::DriverId, bool, u64) {
     let mut vulkan_12_properties = vk::PhysicalDeviceVulkan12Properties::default();
     let physical_device_properties =
         vk::PhysicalDeviceProperties2Builder::new().extend_from(&mut vulkan_12_properties);
@@ -1125,7 +1169,16 @@ fn query_driver(
     let is_integrated =
         physical_device_properties.properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU;
 
-    (vulkan_12_properties.driver_id, is_integrated)
+    let buffer_image_granularity = physical_device_properties
+        .properties
+        .limits
+        .buffer_image_granularity;
+
+    (
+        vulkan_12_properties.driver_id,
+        is_integrated,
+        buffer_image_granularity,
+    )
 }
 
 #[inline]
@@ -1167,66 +1220,6 @@ fn calculate_bucket_index(size: vk::DeviceSize) -> u32 {
     } else {
         64 - MINIMAL_BUCKET_SIZE_LOG2 - (size - 1).leading_zeros() - 1
     }
-}
-
-fn count_unused_ranges(pools: &[Mutex<MemoryPool>]) -> usize {
-    let mut unused_count: usize = 0;
-    pools.iter().for_each(|pool| {
-        collect_start_chunks(pool).iter().for_each(|key| {
-            let mut next_key: NonZeroUsize = *key;
-            let mut previous_size: vk::DeviceSize = 0;
-            let mut previous_offset: vk::DeviceSize = 0;
-            loop {
-                let pool = pool.lock();
-                let chunk = pool.chunks[next_key.get()]
-                    .as_ref()
-                    .expect("can't find chunk in chunk list");
-                if chunk.offset != previous_offset + previous_size {
-                    unused_count += 1;
-                }
-
-                if let Some(key) = chunk.next {
-                    next_key = key
-                } else {
-                    break;
-                }
-
-                previous_size = chunk.size;
-                previous_offset = chunk.offset
-            }
-        });
-    });
-    unused_count
-}
-
-fn count_unused_bytes(pools: &[Mutex<MemoryPool>]) -> vk::DeviceSize {
-    let mut unused_bytes: vk::DeviceSize = 0;
-    pools.iter().for_each(|pool| {
-        collect_start_chunks(pool).iter().for_each(|key| {
-            let mut next_key: NonZeroUsize = *key;
-            let mut previous_size: vk::DeviceSize = 0;
-            let mut previous_offset: vk::DeviceSize = 0;
-            loop {
-                let pool = pool.lock();
-                let chunk = pool.chunks[next_key.get()]
-                    .as_ref()
-                    .expect("can't find chunk in chunk list");
-                if chunk.offset != previous_offset + previous_size {
-                    unused_bytes += chunk.offset - (previous_offset + previous_size);
-                }
-
-                if let Some(key) = chunk.next {
-                    next_key = key
-                } else {
-                    break;
-                }
-
-                previous_size = chunk.size;
-                previous_offset = chunk.offset
-            }
-        });
-    });
-    unused_bytes
 }
 
 #[inline]
