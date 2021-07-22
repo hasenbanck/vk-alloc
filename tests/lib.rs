@@ -3,12 +3,16 @@ use rand::Rng;
 use rand_xoshiro::rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-use vk_alloc::{
-    Allocation, AllocationDescriptor, AllocationType, Allocator, AllocatorDescriptor,
-    MemoryLocation,
-};
+use vk_alloc::{Allocation, AllocationDescriptor, Allocator, AllocatorDescriptor, MemoryLocation};
 
 pub mod fixture;
+
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+enum TestAllocationType {
+    Buffer,
+}
+
+impl vk_alloc::AllocationType for TestAllocationType {}
 
 #[test]
 fn vulkan_context_creation() {
@@ -18,7 +22,7 @@ fn vulkan_context_creation() {
 #[test]
 fn allocator_creation() {
     let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-    Allocator::new(
+    Allocator::<TestAllocationType>::new(
         &ctx.instance,
         ctx.physical_device,
         &AllocatorDescriptor {
@@ -48,7 +52,7 @@ fn allocator_simple_free() {
                     .size(1024)
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: AllocationType::Buffer,
+                allocation_type: TestAllocationType::Buffer,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -78,7 +82,7 @@ fn allocator_allocation_1024() {
     )
     .unwrap();
 
-    let mut allocations: Vec<Allocation> = (0..1024)
+    let mut allocations: Vec<Allocation<_>> = (0..1024)
         .into_iter()
         .map(|i| {
             let allocation = alloc
@@ -91,7 +95,7 @@ fn allocator_allocation_1024() {
                             .size(1024)
                             .memory_type_bits(u32::MAX)
                             .build(),
-                        allocation_type: AllocationType::Buffer,
+                        allocation_type: TestAllocationType::Buffer,
                         is_dedicated: false,
                         is_optimal: false,
                     },
@@ -137,7 +141,7 @@ fn allocator_allocation_256() {
     )
     .unwrap();
 
-    let mut allocations: Vec<Allocation> = (0..1024)
+    let mut allocations: Vec<Allocation<_>> = (0..1024)
         .into_iter()
         .map(|i| {
             let allocation = alloc
@@ -150,7 +154,7 @@ fn allocator_allocation_256() {
                             .size(256)
                             .memory_type_bits(u32::MAX)
                             .build(),
-                        allocation_type: AllocationType::Buffer,
+                        allocation_type: TestAllocationType::Buffer,
                         is_dedicated: false,
                         is_optimal: false,
                     },
@@ -199,7 +203,7 @@ fn allocator_reverse_free() {
     )
     .unwrap();
 
-    let mut allocations: Vec<Allocation> = (0..1024)
+    let mut allocations: Vec<Allocation<_>> = (0..1024)
         .into_iter()
         .map(|i| {
             let allocation = alloc
@@ -212,7 +216,7 @@ fn allocator_reverse_free() {
                             .size(256)
                             .memory_type_bits(u32::MAX)
                             .build(),
-                        allocation_type: AllocationType::Buffer,
+                        allocation_type: TestAllocationType::Buffer,
                         is_dedicated: false,
                         is_optimal: false,
                     },
@@ -267,7 +271,7 @@ fn allocator_free_every_second_time() {
     )
     .unwrap();
 
-    let allocations: Vec<Allocation> = (0..1024)
+    let allocations: Vec<Allocation<_>> = (0..1024)
         .into_iter()
         .map(|_| {
             let allocation = alloc
@@ -280,7 +284,7 @@ fn allocator_free_every_second_time() {
                             .size(1024)
                             .memory_type_bits(u32::MAX)
                             .build(),
-                        allocation_type: AllocationType::Buffer,
+                        allocation_type: TestAllocationType::Buffer,
                         is_dedicated: false,
                         is_optimal: false,
                     },
@@ -290,13 +294,13 @@ fn allocator_free_every_second_time() {
         })
         .collect();
 
-    let mut odd: Vec<Allocation> = allocations
+    let mut odd: Vec<Allocation<_>> = allocations
         .iter()
         .enumerate()
         .filter(|(index, _)| index % 2 == 0)
         .map(|(_, allocation)| allocation.clone())
         .collect();
-    let mut even: Vec<Allocation> = allocations
+    let mut even: Vec<Allocation<_>> = allocations
         .iter()
         .enumerate()
         .filter(|(index, _)| index % 2 == 1)
@@ -339,7 +343,7 @@ fn allocator_allocation_dedicated() {
                     .size(10 * 1024 * 1024) // 10 MiB
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: AllocationType::Buffer,
+                allocation_type: TestAllocationType::Buffer,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -383,7 +387,7 @@ fn allocator_properly_merge_free_entries() {
                     .size(256)
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: AllocationType::Buffer,
+                allocation_type: TestAllocationType::Buffer,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -399,7 +403,7 @@ fn allocator_properly_merge_free_entries() {
                     .size(256)
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: AllocationType::Buffer,
+                allocation_type: TestAllocationType::Buffer,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -415,7 +419,7 @@ fn allocator_properly_merge_free_entries() {
                     .size(256)
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: AllocationType::Buffer,
+                allocation_type: TestAllocationType::Buffer,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -431,7 +435,7 @@ fn allocator_properly_merge_free_entries() {
                     .size(256)
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: AllocationType::Buffer,
+                allocation_type: TestAllocationType::Buffer,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -456,7 +460,7 @@ fn allocator_fuzzy() {
     )
     .unwrap();
 
-    let mut allocations: Vec<(u8, Allocation)> = Vec::with_capacity(10_0000);
+    let mut allocations: Vec<(u8, Allocation<_>)> = Vec::with_capacity(10_0000);
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0);
 
     for i in 0..10_000 {
@@ -476,7 +480,7 @@ fn allocator_fuzzy() {
                             .size(size as u64)
                             .memory_type_bits(u32::MAX)
                             .build(),
-                        allocation_type: AllocationType::Buffer,
+                        allocation_type: TestAllocationType::Buffer,
                         is_dedicated: false,
                         is_optimal: false,
                     },

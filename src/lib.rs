@@ -4,13 +4,56 @@
 #![deny(clippy::unwrap_used)]
 
 //! A segregated list memory allocator for Vulkan.
+//!
+//! The allocator can pool allocations of a user defined allocation type together to help
+//! reducing the fragmentation.
+//!
+//! ## Example:
+//! ```ignore
+//! #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+//! enum AllocationType {
+//!     Buffer,
+//!     TemporaryBuffer,
+//!     Textures,
+//! }
+//!
+//! Allocator::<AllocationType>::new(
+//!     &instance,
+//!     &physical_device,
+//!     &AllocatorDescriptor {
+//!         ..Default::default()
+//!     },
+//! ).unwrap();
+//!
+//! let allocation = alloc
+//!     .allocate(
+//!         &logical_device,
+//!         &AllocationDescriptor {
+//!             location: MemoryLocation::GpuOnly,
+//!             requirements: vk::MemoryRequirementsBuilder::new()
+//!                 .alignment(512)
+//!                 .size(1024)
+//!                 .memory_type_bits(u32::MAX)
+//!                 .build(),
+//!             allocation_type: AllocationType::Buffer,
+//!             is_dedicated: false,
+//!             is_optimal: false,
+//!         },
+//!     )
+//!     .unwrap();
+//!
+//! ```
+//!
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::ffi::c_void;
+use std::fmt::Debug;
+use std::hash::Hash;
 use std::num::NonZeroUsize;
 use std::ptr;
 
 use erupt::{vk, ExtendableFromMut};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 #[cfg(feature = "tracing")]
 use tracing1::{debug, info};
 
@@ -22,6 +65,10 @@ type Result<T> = std::result::Result<T, AllocatorError>;
 
 /// For a minimal bucket size of 256b as log2.
 const MINIMAL_BUCKET_SIZE_LOG2: u32 = 8;
+
+/// The type of an allocation. Used to pool allocations and reduce fragmentation. A good pattern
+/// used in many games is to group allocations by "lifetime".
+pub trait AllocationType: Debug + Copy + Hash + Eq + PartialEq {}
 
 /// Describes the configuration of an `Allocator`.
 #[derive(Debug, Clone)]
@@ -38,17 +85,17 @@ impl Default for AllocatorDescriptor {
 
 /// The general purpose memory allocator. Implemented as a segregated list allocator.
 #[derive(Debug)]
-pub struct Allocator {
+pub struct Allocator<AT: AllocationType> {
     driver_id: vk::DriverId,
     is_integrated: bool,
-    pools: Vec<Mutex<MemoryPool>>,
+    pools: RwLock<HashMap<AT, Vec<Mutex<MemoryPool>>>>,
     block_size: vk::DeviceSize,
-    memory_types_size: u32,
+    memory_types: Vec<vk::MemoryType>,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     buffer_image_granularity: u64,
 }
 
-impl Allocator {
+impl<AT: AllocationType> Allocator<AT> {
     /// Creates a new allocator.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn new(
@@ -66,34 +113,19 @@ impl Allocator {
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
 
         let memory_types_count: usize = (memory_properties.memory_type_count).try_into()?;
-        let memory_types = &memory_properties.memory_types[..memory_types_count];
+        let memory_types = memory_properties.memory_types[..memory_types_count].to_owned();
 
         #[cfg(feature = "tracing")]
-        print_memory_types(memory_properties, memory_types)?;
-
-        let memory_types_size: u32 = memory_types.len().try_into()?;
+        print_memory_types(memory_properties, &memory_types)?;
 
         let block_size: vk::DeviceSize = (2u64).pow(descriptor.block_size.into()).into();
-
-        let mut pools = Vec::with_capacity(memory_types_size.try_into()?);
-        for (memory_type, i) in memory_types.iter().zip(0..memory_types_size) {
-            let pool = MemoryPool::new(
-                i,
-                block_size,
-                i,
-                memory_type
-                    .property_flags
-                    .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
-            )?;
-            pools.push(Mutex::new(pool));
-        }
 
         Ok(Self {
             driver_id,
             is_integrated,
-            pools,
+            pools: RwLock::default(),
             block_size,
-            memory_types_size,
+            memory_types,
             memory_properties,
             buffer_image_granularity,
         })
@@ -105,7 +137,8 @@ impl Allocator {
         device: &erupt::DeviceLoader,
         buffer: vk::Buffer,
         location: MemoryLocation,
-    ) -> Result<Allocation> {
+        allocation_type: AT,
+    ) -> Result<Allocation<AT>> {
         let info = vk::BufferMemoryRequirementsInfo2Builder::new().buffer(buffer);
         let mut dedicated_requirements = vk::MemoryDedicatedRequirementsBuilder::new();
         let requirements =
@@ -122,7 +155,7 @@ impl Allocator {
         let alloc_decs = AllocationDescriptor {
             requirements: memory_requirements,
             location,
-            allocation_type: AllocationType::Buffer,
+            allocation_type,
             is_dedicated,
             is_optimal: false,
         };
@@ -136,8 +169,9 @@ impl Allocator {
         device: &erupt::DeviceLoader,
         image: vk::Image,
         location: MemoryLocation,
+        allocation_type: AT,
         is_optimal: bool,
-    ) -> Result<Allocation> {
+    ) -> Result<Allocation<AT>> {
         let info = vk::ImageMemoryRequirementsInfo2Builder::new().image(image);
         let mut dedicated_requirements = vk::MemoryDedicatedRequirementsBuilder::new();
         let requirements =
@@ -154,7 +188,7 @@ impl Allocator {
         let alloc_decs = AllocationDescriptor {
             requirements: memory_requirements,
             location,
-            allocation_type: AllocationType::OptimalImage,
+            allocation_type,
             is_dedicated,
             is_optimal,
         };
@@ -167,8 +201,8 @@ impl Allocator {
     pub fn allocate(
         &self,
         device: &erupt::DeviceLoader,
-        descriptor: &AllocationDescriptor,
-    ) -> Result<Allocation> {
+        descriptor: &AllocationDescriptor<AT>,
+    ) -> Result<Allocation<AT>> {
         let size = descriptor.requirements.size;
         let alignment = descriptor.requirements.alignment;
 
@@ -187,7 +221,40 @@ impl Allocator {
             descriptor.requirements.memory_type_bits,
         )?;
 
-        let pool = &self.pools[memory_type_index];
+        let has_key = self.pools.read().contains_key(&descriptor.allocation_type);
+        if !has_key {
+            let mut pools = Vec::with_capacity(self.memory_types.len());
+            for (i, memory_type) in self.memory_types.iter().enumerate() {
+                let pool = MemoryPool::new(
+                    self.block_size,
+                    i.try_into()?,
+                    memory_type
+                        .property_flags
+                        .contains(vk::MemoryPropertyFlags::HOST_VISIBLE),
+                )?;
+                pools.push(Mutex::new(pool));
+            }
+
+            self.pools.write().insert(descriptor.allocation_type, pools);
+        }
+
+        let allocation_type_pools = self.pools.read();
+
+        let pool = &allocation_type_pools
+            .get(&descriptor.allocation_type)
+            .ok_or_else(|| {
+                AllocatorError::Internal(format!(
+                    "can't find pool for lifetime {:?}",
+                    descriptor.allocation_type
+                ))
+            })?
+            .get(memory_type_index)
+            .ok_or_else(|| {
+                AllocatorError::Internal(format!(
+                    "can't find memory_type {} in pool {:?}",
+                    memory_type_index, descriptor.allocation_type
+                ))
+            })?;
 
         if descriptor.is_dedicated || size >= self.block_size {
             #[cfg(feature = "tracing")]
@@ -195,7 +262,8 @@ impl Allocator {
                 "Allocating as dedicated block on memory type {}",
                 memory_type_index
             );
-            pool.lock().allocate_dedicated(device, size)
+            pool.lock()
+                .allocate_dedicated(device, size, descriptor.allocation_type)
         } else {
             #[cfg(feature = "tracing")]
             debug!("Sub allocating on memory type {}", memory_type_index);
@@ -204,6 +272,7 @@ impl Allocator {
                 self.buffer_image_granularity,
                 size,
                 alignment,
+                descriptor.allocation_type,
                 descriptor.is_optimal,
             )
         }
@@ -300,9 +369,28 @@ impl Allocator {
 
     /// Frees the allocation.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn deallocate(&self, device: &erupt::DeviceLoader, allocation: &Allocation) -> Result<()> {
-        let pool_index: usize = allocation.pool_index.try_into()?;
-        let memory_pool: &Mutex<MemoryPool> = &self.pools[pool_index];
+    pub fn deallocate(
+        &self,
+        device: &erupt::DeviceLoader,
+        allocation: &Allocation<AT>,
+    ) -> Result<()> {
+        let memory_type_index: usize = allocation.memory_type_index.try_into()?;
+        let pools = &self.pools.read();
+        let memory_pool = &pools
+            .get(&allocation.allocation_type)
+            .ok_or_else(|| {
+                AllocatorError::Internal(format!(
+                    "can't find pool for lifetime {:?}",
+                    allocation.allocation_type
+                ))
+            })?
+            .get(memory_type_index)
+            .ok_or_else(|| {
+                AllocatorError::Internal(format!(
+                    "can't find memory_type {} in pool {:?}",
+                    memory_type_index, allocation.allocation_type
+                ))
+            })?;
 
         if let Some(chunk_key) = allocation.chunk_key {
             #[cfg(feature = "tracing")]
@@ -329,38 +417,44 @@ impl Allocator {
     /// Releases all memory blocks back to the system. Should be called before drop.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn cleanup(&mut self, device: &erupt::DeviceLoader) {
-        self.pools.drain(..).for_each(|pool| {
-            pool.lock().blocks.iter_mut().for_each(|block| {
-                if let Some(block) = block {
-                    block.destroy(&device)
-                }
-            })
-        });
+        for (_, mut allocation_type_pools) in self.pools.write().drain() {
+            allocation_type_pools.drain(..).for_each(|pool| {
+                pool.lock().blocks.iter_mut().for_each(|block| {
+                    if let Some(block) = block {
+                        block.destroy(&device)
+                    }
+                })
+            });
+        }
     }
 
     /// Number of allocations.
     pub fn allocation_count(&self) -> usize {
         let mut count = 0;
-        for pool in &self.pools {
-            let pool = pool.lock();
-            for chunk in &pool.chunks {
-                if let Some(chunk) = chunk {
-                    if chunk.chunk_type != ChunkType::Free {
-                        count += 1;
+        for (_, allocation_type_pools) in self.pools.read().iter() {
+            allocation_type_pools.iter().for_each(|pool| {
+                let pool = pool.lock();
+                for chunk in &pool.chunks {
+                    if let Some(chunk) = chunk {
+                        if chunk.chunk_type != ChunkType::Free {
+                            count += 1;
+                        }
                     }
                 }
-            }
+            });
         }
 
-        for pool in &self.pools {
-            let pool = pool.lock();
-            for block in &pool.blocks {
-                if let Some(block) = block {
-                    if block.is_dedicated {
-                        count += 1;
+        for (_, allocation_type_pools) in self.pools.read().iter() {
+            allocation_type_pools.iter().for_each(|pool| {
+                let pool = pool.lock();
+                for block in &pool.blocks {
+                    if let Some(block) = block {
+                        if block.is_dedicated {
+                            count += 1;
+                        }
                     }
                 }
-            }
+            });
         }
 
         count
@@ -370,31 +464,33 @@ impl Allocator {
     pub fn unused_range_count(&self) -> usize {
         let mut unused_count: usize = 0;
 
-        self.pools.iter().for_each(|pool| {
-            collect_start_chunks(pool).iter().for_each(|key| {
-                let mut next_key: NonZeroUsize = *key;
-                let mut previous_size: vk::DeviceSize = 0;
-                let mut previous_offset: vk::DeviceSize = 0;
-                loop {
-                    let pool = pool.lock();
-                    let chunk = pool.chunks[next_key.get()]
-                        .as_ref()
-                        .expect("can't find chunk in chunk list");
-                    if chunk.offset != previous_offset + previous_size {
-                        unused_count += 1;
-                    }
+        for (_, allocation_type_pools) in self.pools.read().iter() {
+            allocation_type_pools.iter().for_each(|pool| {
+                collect_start_chunks(&pool).iter().for_each(|key| {
+                    let mut next_key: NonZeroUsize = *key;
+                    let mut previous_size: vk::DeviceSize = 0;
+                    let mut previous_offset: vk::DeviceSize = 0;
+                    loop {
+                        let pool = pool.lock();
+                        let chunk = pool.chunks[next_key.get()]
+                            .as_ref()
+                            .expect("can't find chunk in chunk list");
+                        if chunk.offset != previous_offset + previous_size {
+                            unused_count += 1;
+                        }
 
-                    if let Some(key) = chunk.next {
-                        next_key = key
-                    } else {
-                        break;
-                    }
+                        if let Some(key) = chunk.next {
+                            next_key = key
+                        } else {
+                            break;
+                        }
 
-                    previous_size = chunk.size;
-                    previous_offset = chunk.offset
-                }
-            });
-        });
+                        previous_size = chunk.size;
+                        previous_offset = chunk.offset
+                    }
+                });
+            })
+        }
 
         unused_count
     }
@@ -403,26 +499,30 @@ impl Allocator {
     pub fn used_bytes(&self) -> vk::DeviceSize {
         let mut bytes = 0;
 
-        for pool in &self.pools {
-            let pool = pool.lock();
-            for chunk in &pool.chunks {
-                if let Some(chunk) = chunk {
-                    if chunk.chunk_type != ChunkType::Free {
-                        bytes += chunk.size;
+        for (_, allocation_type_pools) in self.pools.read().iter() {
+            allocation_type_pools.iter().for_each(|pool| {
+                let pool = pool.lock();
+                for chunk in &pool.chunks {
+                    if let Some(chunk) = chunk {
+                        if chunk.chunk_type != ChunkType::Free {
+                            bytes += chunk.size;
+                        }
                     }
                 }
-            }
+            });
         }
 
-        for pool in &self.pools {
-            let pool = pool.lock();
-            for block in &pool.blocks {
-                if let Some(block) = block {
-                    if block.is_dedicated {
-                        bytes += block.size;
+        for (_, allocation_type_pools) in self.pools.read().iter() {
+            allocation_type_pools.iter().for_each(|pool| {
+                let pool = pool.lock();
+                for block in &pool.blocks {
+                    if let Some(block) = block {
+                        if block.is_dedicated {
+                            bytes += block.size;
+                        }
                     }
                 }
-            }
+            });
         }
 
         bytes
@@ -432,55 +532,50 @@ impl Allocator {
     pub fn unused_bytes(&self) -> vk::DeviceSize {
         let mut unused_bytes: vk::DeviceSize = 0;
 
-        self.pools.iter().for_each(|pool| {
-            collect_start_chunks(pool).iter().for_each(|key| {
-                let mut next_key: NonZeroUsize = *key;
-                let mut previous_size: vk::DeviceSize = 0;
-                let mut previous_offset: vk::DeviceSize = 0;
-                loop {
-                    let pool = pool.lock();
-                    let chunk = pool.chunks[next_key.get()]
-                        .as_ref()
-                        .expect("can't find chunk in chunk list");
-                    if chunk.offset != previous_offset + previous_size {
-                        unused_bytes += chunk.offset - (previous_offset + previous_size);
-                    }
+        for (_, allocation_type_pools) in self.pools.read().iter() {
+            allocation_type_pools.iter().for_each(|pool| {
+                collect_start_chunks(&pool).iter().for_each(|key| {
+                    let mut next_key: NonZeroUsize = *key;
+                    let mut previous_size: vk::DeviceSize = 0;
+                    let mut previous_offset: vk::DeviceSize = 0;
+                    loop {
+                        let pool = pool.lock();
+                        let chunk = pool.chunks[next_key.get()]
+                            .as_ref()
+                            .expect("can't find chunk in chunk list");
+                        if chunk.offset != previous_offset + previous_size {
+                            unused_bytes += chunk.offset - (previous_offset + previous_size);
+                        }
 
-                    if let Some(key) = chunk.next {
-                        next_key = key
-                    } else {
-                        break;
-                    }
+                        if let Some(key) = chunk.next {
+                            next_key = key
+                        } else {
+                            break;
+                        }
 
-                    previous_size = chunk.size;
-                    previous_offset = chunk.offset
-                }
+                        previous_size = chunk.size;
+                        previous_offset = chunk.offset
+                    }
+                });
             });
-        });
+        }
 
         unused_bytes
     }
 
     /// Number of allocated Vulkan memory blocks.
     pub fn block_count(&self) -> usize {
-        self.pools.iter().map(|pool| pool.lock().blocks.len()).sum()
+        let mut count: usize = 0;
+
+        for (_, allocation_type_pools) in self.pools.read().iter() {
+            count += allocation_type_pools
+                .iter()
+                .map(|pool| pool.lock().blocks.len())
+                .sum::<usize>();
+        }
+
+        count
     }
-}
-
-// TODO make the AllocationType generic. Track for an allocation if it's a linear or optimal allocation and
-//      properly handle the align between those two types. We then only have "lifetimes" that
-//      we track. The user can then have lifetimes like:
-//      enum Lifetime { TemporaryBuffer, DynamicLBuffer, StaticBuffer, Textures }
-
-/// Type of the allocation.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum AllocationType {
-    /// An allocation for a buffer.
-    Buffer,
-    /// An allocation for a regular image.
-    OptimalImage,
-    /// An allocation for a linear image.
-    LinearImage,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -517,13 +612,13 @@ pub enum MemoryLocation {
 
 /// The descriptor for an allocation on the allocator.
 #[derive(Clone, Debug)]
-pub struct AllocationDescriptor {
+pub struct AllocationDescriptor<AT: AllocationType> {
     /// Location where the memory allocation should be stored.
     pub location: MemoryLocation,
     /// Vulkan memory requirements for an allocation.
     pub requirements: vk::MemoryRequirements,
-    /// The type of the allocation.
-    pub allocation_type: AllocationType,
+    /// The type of the allocation. Used to pool together resources of the same lifetime.
+    pub allocation_type: AT,
     /// If the allocation should be dedicated.
     pub is_dedicated: bool,
     /// True if the allocation is for a optimal image (regular textures). Buffers and linear
@@ -533,8 +628,9 @@ pub struct AllocationDescriptor {
 
 /// An allocation of the `Allocator`.
 #[derive(Clone, Debug)]
-pub struct Allocation {
-    pool_index: u32,
+pub struct Allocation<AT: AllocationType> {
+    memory_type_index: u32,
+    allocation_type: AT,
     block_key: NonZeroUsize,
     chunk_key: Option<NonZeroUsize>,
     mapped_ptr: Option<std::ptr::NonNull<c_void>>,
@@ -547,11 +643,11 @@ pub struct Allocation {
     pub size: vk::DeviceSize,
 }
 
-unsafe impl Send for Allocation {}
+unsafe impl<AT: AllocationType> Send for Allocation<AT> {}
 
-unsafe impl Sync for Allocation {}
+unsafe impl<AT: AllocationType> Sync for Allocation<AT> {}
 
-impl Allocation {
+impl<AT: AllocationType> Allocation<AT> {
     /// Returns a valid mapped slice if the memory is host visible, otherwise it will return None.
     /// The slice already references the exact memory region of the sub allocation, so no offset needs to be applied.
     pub fn mapped_slice(&self) -> Result<Option<&[u8]>> {
@@ -596,9 +692,8 @@ struct BestFitCandidate {
 /// so that internal memory fragmentation is kept low.
 #[derive(Debug)]
 struct MemoryPool {
-    pool_index: u32,
-    block_size: vk::DeviceSize,
     memory_type_index: u32,
+    block_size: vk::DeviceSize,
     is_mappable: bool,
     blocks: Vec<Option<MemoryBlock>>,
     chunks: Vec<Option<MemoryChunk>>,
@@ -611,12 +706,7 @@ struct MemoryPool {
 }
 
 impl MemoryPool {
-    fn new(
-        pool_index: u32,
-        block_size: vk::DeviceSize,
-        memory_type_index: u32,
-        is_mappable: bool,
-    ) -> Result<Self> {
+    fn new(block_size: vk::DeviceSize, memory_type_index: u32, is_mappable: bool) -> Result<Self> {
         let mut blocks = Vec::with_capacity(128);
         let mut chunks = Vec::with_capacity(128);
 
@@ -642,9 +732,8 @@ impl MemoryPool {
         }
 
         Ok(Self {
-            pool_index,
-            block_size,
             memory_type_index,
+            block_size,
             is_mappable,
             blocks,
             chunks,
@@ -677,11 +766,12 @@ impl MemoryPool {
         }
     }
 
-    fn allocate_dedicated(
+    fn allocate_dedicated<AT: AllocationType>(
         &mut self,
         device: &erupt::DeviceLoader,
         size: vk::DeviceSize,
-    ) -> Result<Allocation> {
+        allocation_type: AT,
+    ) -> Result<Allocation<AT>> {
         let block = MemoryBlock::new(device, size, self.memory_type_index, self.is_mappable, true)?;
 
         let device_memory = block.device_memory;
@@ -690,7 +780,8 @@ impl MemoryPool {
         let key = self.add_block(block);
 
         Ok(Allocation {
-            pool_index: self.pool_index,
+            memory_type_index: self.memory_type_index,
+            allocation_type,
             block_key: key,
             chunk_key: None,
             device_memory,
@@ -700,14 +791,15 @@ impl MemoryPool {
         })
     }
 
-    fn allocate(
+    fn allocate<AT: AllocationType>(
         &mut self,
         device: &erupt::DeviceLoader,
         buffer_image_granularity: u64,
         size: vk::DeviceSize,
         alignment: vk::DeviceSize,
+        allocation_type: AT,
         is_optimal: bool,
-    ) -> Result<Allocation> {
+    ) -> Result<Allocation<AT>> {
         let mut bucket_index = calculate_bucket_index(size);
 
         // Make sure that we don't try to allocate a chunk bigger than the block.
@@ -868,7 +960,8 @@ impl MemoryPool {
                 };
 
                 let allocation = Allocation {
-                    pool_index: self.pool_index,
+                    memory_type_index: self.memory_type_index,
+                    allocation_type,
                     block_key: candidate_chunk.block_key,
                     chunk_key: Some(candidate.key),
                     device_memory: block.device_memory,
