@@ -1189,7 +1189,7 @@ impl MemoryBlock {
         let device_memory = {
             let alloc_info = vk::MemoryAllocateInfoBuilder::new()
                 .allocation_size(size)
-                .memory_type_index(memory_type_index as u32);
+                .memory_type_index(memory_type_index);
 
             unsafe { device.allocate_memory(&alloc_info, None) }
                 .map_err(|_| AllocatorError::OutOfMemory)?
