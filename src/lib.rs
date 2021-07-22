@@ -136,17 +136,19 @@ impl Allocator {
             location,
             allocation_type: AllocationType::Buffer,
             is_dedicated,
+            is_optimal: false,
         };
 
         self.allocate(device, &alloc_decs)
     }
 
-    /// Allocates memory for an image.
+    /// Allocates memory for an image. `is_optimal` must be set true if the image is a optimal image (a regular texture).
     pub fn allocate_memory_for_image(
         &self,
         device: &erupt::DeviceLoader,
         image: vk::Image,
         location: MemoryLocation,
+        is_optimal: bool,
     ) -> Result<Allocation> {
         let info = vk::ImageMemoryRequirementsInfo2Builder::new().image(image);
         let mut dedicated_requirements = vk::MemoryDedicatedRequirementsBuilder::new();
@@ -166,25 +168,13 @@ impl Allocator {
             location,
             allocation_type: AllocationType::OptimalImage,
             is_dedicated,
+            is_optimal,
         };
 
         self.allocate(device, &alloc_decs)
     }
 
     /// Allocates memory on the allocator.
-    //
-    // For each memory type we have two memory pools: For linear resources and for optimal textures.
-    // This removes the need to check for the granularity between them and the idea is, that
-    // buffers/textures have different lifetimes and internal fragmentation is smaller this way.
-    //
-    // Dedicated blocks still exists in their respective pools. They are de-allocated when
-    // they are freed. Normal blocks are not de-allocated.
-    //
-    // Each pool has fixed sized blocks that need to be of power two size. Each block has at
-    // least one chunk.
-    //
-    // Free chunks are saved in a segregated list with buckets of power of two sizes.
-    // The biggest bucket size is the block size.
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn allocate(
         &self,
@@ -226,7 +216,8 @@ impl Allocator {
         } else {
             #[cfg(feature = "tracing")]
             debug!("Sub allocating on memory type {}", memory_type_index);
-            pool.lock().allocate(device, size, alignment)
+            pool.lock()
+                .allocate(device, size, alignment, descriptor.is_optimal)
         }
     }
 
@@ -378,7 +369,7 @@ impl Allocator {
             let pool = pool.lock();
             for chunk in &pool.chunks {
                 if let Some(chunk) = chunk {
-                    if !chunk.is_free {
+                    if chunk.chunk_type != ChunkType::Free {
                         buffer_count += 1;
                     }
                 }
@@ -390,7 +381,7 @@ impl Allocator {
             let pool = pool.lock();
             for chunk in &pool.chunks {
                 if let Some(chunk) = chunk {
-                    if !chunk.is_free {
+                    if chunk.chunk_type != ChunkType::Free {
                         image_count += 1;
                     }
                 }
@@ -436,7 +427,7 @@ impl Allocator {
             let pool = pool.lock();
             for chunk in &pool.chunks {
                 if let Some(chunk) = chunk {
-                    if !chunk.is_free {
+                    if chunk.chunk_type != ChunkType::Free {
                         buffer_bytes += chunk.size;
                     }
                 }
@@ -448,7 +439,7 @@ impl Allocator {
             let pool = pool.lock();
             for chunk in &pool.chunks {
                 if let Some(chunk) = chunk {
-                    if !chunk.is_free {
+                    if chunk.chunk_type != ChunkType::Free {
                         image_bytes += chunk.size;
                     }
                 }
@@ -504,6 +495,11 @@ impl Allocator {
     }
 }
 
+// TODO make the AllocationType generic. Track for an allocation if it's a linear or optimal allocation and
+//      properly handle the align between those two types. We then only have "lifetimes" that
+//      we track. The user can then have lifetimes like:
+//      enum Lifetime { TemporaryBuffer, DynamicLBuffer, StaticBuffer, Textures }
+
 /// Type of the allocation.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AllocationType {
@@ -513,6 +509,14 @@ pub enum AllocationType {
     OptimalImage,
     /// An allocation for a linear image.
     LinearImage,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[repr(u8)]
+enum ChunkType {
+    Free,
+    Linear,
+    Optimal,
 }
 
 /// The intended location of the memory.
@@ -537,6 +541,9 @@ pub struct AllocationDescriptor {
     pub allocation_type: AllocationType,
     /// If the allocation should be dedicated.
     pub is_dedicated: bool,
+    /// True if the allocation is for a optimal image (regular textures). Buffers and linear
+    /// images need to set this false.
+    pub is_optimal: bool,
 }
 
 /// An allocation of the `Allocator`.
@@ -713,6 +720,7 @@ impl MemoryPool {
         device: &erupt::DeviceLoader,
         size: vk::DeviceSize,
         alignment: vk::DeviceSize,
+        is_optimal: bool,
     ) -> Result<Allocation> {
         let mut bucket_index = calculate_bucket_index(size);
 
@@ -735,7 +743,7 @@ impl MemoryPool {
                 let chunk = &self.chunks[key.get()]
                     .as_ref()
                     .expect("can't find chunk in chunk list");
-                debug_assert!(chunk.is_free);
+                debug_assert!(chunk.chunk_type == ChunkType::Free);
 
                 if chunk.size < size {
                     continue;
@@ -792,7 +800,7 @@ impl MemoryPool {
                         offset: new_free_offset,
                         previous: Some(candidate.key),
                         next: candidate_chunk.next,
-                        is_free: true,
+                        chunk_type: ChunkType::Free,
                     };
 
                     let new_free_chunk_key = self.add_chunk(new_free_chunk);
@@ -809,7 +817,11 @@ impl MemoryPool {
                 let candidate_chunk = self.chunks[candidate.key.get()]
                     .as_mut()
                     .expect("can't find chunk in chunk list");
-                candidate_chunk.is_free = false;
+                candidate_chunk.chunk_type = if is_optimal {
+                    ChunkType::Optimal
+                } else {
+                    ChunkType::Linear
+                };
                 candidate_chunk.offset = align_up(candidate_chunk.offset, alignment);
                 candidate_chunk.size = size;
 
@@ -875,7 +887,7 @@ impl MemoryPool {
             offset: 0,
             previous: None,
             next: None,
-            is_free: true,
+            chunk_type: ChunkType::Free,
         };
 
         let chunk_key = self.add_chunk(chunk);
@@ -891,7 +903,7 @@ impl MemoryPool {
             let chunk = self.chunks[chunk_key.get()]
                 .as_mut()
                 .ok_or(AllocatorError::CantFindChunk)?;
-            chunk.is_free = true;
+            chunk.chunk_type = ChunkType::Free;
             (chunk.previous, chunk.next, chunk.size)
         };
         self.add_to_free_list(chunk_key, size)?;
@@ -912,7 +924,8 @@ impl MemoryPool {
             if self.chunks[neighbor_key.get()]
                 .as_ref()
                 .expect("can't find chunk in chunk list")
-                .is_free
+                .chunk_type
+                == ChunkType::Free
             {
                 if neighbor_is_lhs {
                     self.merge_rhs_into_lhs_chunk(neighbor_key, chunk_key)?;
@@ -1010,7 +1023,7 @@ struct MemoryChunk {
     offset: vk::DeviceSize,
     previous: Option<NonZeroUsize>,
     next: Option<NonZeroUsize>,
-    is_free: bool,
+    chunk_type: ChunkType,
 }
 
 /// A reserved memory block.

@@ -50,6 +50,7 @@ fn allocator_simple_free() {
                     .build(),
                 allocation_type: AllocationType::Buffer,
                 is_dedicated: false,
+                is_optimal: false,
             },
         )
         .unwrap();
@@ -92,6 +93,7 @@ fn allocator_allocation_1024() {
                             .build(),
                         allocation_type: AllocationType::Buffer,
                         is_dedicated: false,
+                        is_optimal: false,
                     },
                 )
                 .unwrap();
@@ -150,6 +152,7 @@ fn allocator_allocation_256() {
                             .build(),
                         allocation_type: AllocationType::Buffer,
                         is_dedicated: false,
+                        is_optimal: false,
                     },
                 )
                 .unwrap();
@@ -211,6 +214,7 @@ fn allocator_reverse_free() {
                             .build(),
                         allocation_type: AllocationType::Buffer,
                         is_dedicated: false,
+                        is_optimal: false,
                     },
                 )
                 .unwrap();
@@ -278,6 +282,7 @@ fn allocator_free_every_second_time() {
                             .build(),
                         allocation_type: AllocationType::Buffer,
                         is_dedicated: false,
+                        is_optimal: false,
                     },
                 )
                 .unwrap();
@@ -336,6 +341,7 @@ fn allocator_allocation_dedicated() {
                     .build(),
                 allocation_type: AllocationType::Buffer,
                 is_dedicated: false,
+                is_optimal: false,
             },
         )
         .unwrap();
@@ -379,6 +385,7 @@ fn allocator_properly_merge_free_entries() {
                     .build(),
                 allocation_type: AllocationType::Buffer,
                 is_dedicated: false,
+                is_optimal: false,
             },
         )
         .unwrap();
@@ -394,6 +401,7 @@ fn allocator_properly_merge_free_entries() {
                     .build(),
                 allocation_type: AllocationType::Buffer,
                 is_dedicated: false,
+                is_optimal: false,
             },
         )
         .unwrap();
@@ -409,6 +417,7 @@ fn allocator_properly_merge_free_entries() {
                     .build(),
                 allocation_type: AllocationType::Buffer,
                 is_dedicated: false,
+                is_optimal: false,
             },
         )
         .unwrap();
@@ -424,6 +433,7 @@ fn allocator_properly_merge_free_entries() {
                     .build(),
                 allocation_type: AllocationType::Buffer,
                 is_dedicated: false,
+                is_optimal: false,
             },
         )
         .unwrap();
@@ -468,6 +478,7 @@ fn allocator_fuzzy() {
                             .build(),
                         allocation_type: AllocationType::Buffer,
                         is_dedicated: false,
+                        is_optimal: false,
                     },
                 )
                 .unwrap();
