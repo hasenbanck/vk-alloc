@@ -8,11 +8,11 @@ use vk_alloc::{Allocation, AllocationDescriptor, Allocator, AllocatorDescriptor,
 pub mod fixture;
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-enum TestAllocationType {
-    Buffer,
+enum TestLifetime {
+    Static,
 }
 
-impl vk_alloc::AllocationType for TestAllocationType {}
+impl vk_alloc::Lifetime for TestLifetime {}
 
 #[test]
 fn vulkan_context_creation() {
@@ -22,7 +22,7 @@ fn vulkan_context_creation() {
 #[test]
 fn allocator_creation() {
     let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-    Allocator::<TestAllocationType>::new(
+    Allocator::<TestLifetime>::new(
         &ctx.instance,
         ctx.physical_device,
         &AllocatorDescriptor {
@@ -52,7 +52,7 @@ fn allocator_simple_free() {
                     .size(1024)
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: TestAllocationType::Buffer,
+                lifetime: TestLifetime::Static,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -95,7 +95,7 @@ fn allocator_allocation_1024() {
                             .size(1024)
                             .memory_type_bits(u32::MAX)
                             .build(),
-                        allocation_type: TestAllocationType::Buffer,
+                        lifetime: TestLifetime::Static,
                         is_dedicated: false,
                         is_optimal: false,
                     },
@@ -154,7 +154,7 @@ fn allocator_allocation_256() {
                             .size(256)
                             .memory_type_bits(u32::MAX)
                             .build(),
-                        allocation_type: TestAllocationType::Buffer,
+                        lifetime: TestLifetime::Static,
                         is_dedicated: false,
                         is_optimal: false,
                     },
@@ -216,7 +216,7 @@ fn allocator_reverse_free() {
                             .size(256)
                             .memory_type_bits(u32::MAX)
                             .build(),
-                        allocation_type: TestAllocationType::Buffer,
+                        lifetime: TestLifetime::Static,
                         is_dedicated: false,
                         is_optimal: false,
                     },
@@ -248,9 +248,12 @@ fn allocator_reverse_free() {
 
             assert_eq!(alloc.allocation_count(), 1023 - i);
             assert_eq!(alloc.used_bytes(), 256 * (1023 - i) as vk::DeviceSize);
-            // sic! We free from the front. The padding is part of the next chunk.
-            assert_eq!(alloc.unused_range_count(), 1023 - i);
-            assert_eq!(alloc.unused_bytes(), 768 * (1023 - i) as vk::DeviceSize);
+
+            // the last part not in use is a free chunk!
+            if i < 1023 {
+                assert_eq!(alloc.unused_range_count(), 1022 - i);
+                assert_eq!(alloc.unused_bytes(), 768 * (1022 - i) as vk::DeviceSize);
+            }
         });
 
     assert_eq!(alloc.allocation_count(), 0);
@@ -284,7 +287,7 @@ fn allocator_free_every_second_time() {
                             .size(1024)
                             .memory_type_bits(u32::MAX)
                             .build(),
-                        allocation_type: TestAllocationType::Buffer,
+                        lifetime: TestLifetime::Static,
                         is_dedicated: false,
                         is_optimal: false,
                     },
@@ -343,7 +346,7 @@ fn allocator_allocation_dedicated() {
                     .size(10 * 1024 * 1024) // 10 MiB
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: TestAllocationType::Buffer,
+                lifetime: TestLifetime::Static,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -387,7 +390,7 @@ fn allocator_properly_merge_free_entries() {
                     .size(256)
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: TestAllocationType::Buffer,
+                lifetime: TestLifetime::Static,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -403,7 +406,7 @@ fn allocator_properly_merge_free_entries() {
                     .size(256)
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: TestAllocationType::Buffer,
+                lifetime: TestLifetime::Static,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -419,7 +422,7 @@ fn allocator_properly_merge_free_entries() {
                     .size(256)
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: TestAllocationType::Buffer,
+                lifetime: TestLifetime::Static,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -435,7 +438,7 @@ fn allocator_properly_merge_free_entries() {
                     .size(256)
                     .memory_type_bits(u32::MAX)
                     .build(),
-                allocation_type: TestAllocationType::Buffer,
+                lifetime: TestLifetime::Static,
                 is_dedicated: false,
                 is_optimal: false,
             },
@@ -480,7 +483,7 @@ fn allocator_fuzzy() {
                             .size(size as u64)
                             .memory_type_bits(u32::MAX)
                             .build(),
-                        allocation_type: TestAllocationType::Buffer,
+                        lifetime: TestLifetime::Static,
                         is_dedicated: false,
                         is_optimal: false,
                     },
@@ -508,4 +511,77 @@ fn allocator_fuzzy() {
     alloc.cleanup(&ctx.logical_device);
 }
 
-// TODO write a test that tests the buffer / image granularity
+#[test]
+fn allocator_granularity() {
+    let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
+    let mut alloc = Allocator::new(
+        &ctx.instance,
+        ctx.physical_device,
+        &AllocatorDescriptor { block_size: 20 }, // 1 MiB
+    )
+    .unwrap();
+
+    let allocation1 = alloc
+        .allocate(
+            &ctx.logical_device,
+            &AllocationDescriptor {
+                location: MemoryLocation::GpuOnly,
+                requirements: vk::MemoryRequirementsBuilder::new()
+                    .alignment(256)
+                    .size(512)
+                    .memory_type_bits(u32::MAX)
+                    .build(),
+                lifetime: TestLifetime::Static,
+                is_dedicated: false,
+                is_optimal: false,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(allocation1.size, 512);
+    assert_eq!(allocation1.offset, 0);
+
+    let allocation2 = alloc
+        .allocate(
+            &ctx.logical_device,
+            &AllocationDescriptor {
+                location: MemoryLocation::GpuOnly,
+                requirements: vk::MemoryRequirementsBuilder::new()
+                    .alignment(256)
+                    .size(1024)
+                    .memory_type_bits(u32::MAX)
+                    .build(),
+                lifetime: TestLifetime::Static,
+                is_dedicated: false,
+                is_optimal: true,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(allocation2.size, 1024);
+    assert_eq!(allocation2.offset, 1024);
+
+    alloc.deallocate(&ctx.logical_device, &allocation2).unwrap();
+
+    let allocation3 = alloc
+        .allocate(
+            &ctx.logical_device,
+            &AllocationDescriptor {
+                location: MemoryLocation::GpuOnly,
+                requirements: vk::MemoryRequirementsBuilder::new()
+                    .alignment(256)
+                    .size(1024)
+                    .memory_type_bits(u32::MAX)
+                    .build(),
+                lifetime: TestLifetime::Static,
+                is_dedicated: false,
+                is_optimal: false,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(allocation3.size, 1024);
+    assert_eq!(allocation3.offset, 512);
+
+    alloc.cleanup(&ctx.logical_device);
+}
