@@ -138,6 +138,7 @@ impl<LT: Lifetime> Allocator<LT> {
     ///
     /// # Safety
     /// Caller needs to make sure that the provided device and buffer are in a valid state.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub unsafe fn allocate_memory_for_buffer(
         &self,
         device: &erupt::DeviceLoader,
@@ -173,6 +174,7 @@ impl<LT: Lifetime> Allocator<LT> {
     ///
     /// # Safety
     /// Caller needs to make sure that the provided device and image are in a valid state.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub unsafe fn allocate_memory_for_image(
         &self,
         device: &erupt::DeviceLoader,
@@ -289,6 +291,7 @@ impl<LT: Lifetime> Allocator<LT> {
         }
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn find_memory_type_index(
         &self,
         location: MemoryLocation,
@@ -360,6 +363,7 @@ impl<LT: Lifetime> Allocator<LT> {
         }
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn query_memory_type_index(
         &self,
         memory_type_bits: u32,
@@ -448,6 +452,7 @@ impl<LT: Lifetime> Allocator<LT> {
     }
 
     /// Number of allocations.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn allocation_count(&self) -> usize {
         let mut count = 0;
         for (_, lifetime_pools) in self.pools.read().iter() {
@@ -480,6 +485,7 @@ impl<LT: Lifetime> Allocator<LT> {
     }
 
     /// Number of unused ranges between allocations.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn unused_range_count(&self) -> usize {
         let mut unused_count: usize = 0;
 
@@ -515,6 +521,7 @@ impl<LT: Lifetime> Allocator<LT> {
     }
 
     /// Number of bytes used by the allocations.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn used_bytes(&self) -> vk::DeviceSize {
         let mut bytes = 0;
 
@@ -548,6 +555,7 @@ impl<LT: Lifetime> Allocator<LT> {
     }
 
     /// Number of bytes used by the unused ranges between allocations.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn unused_bytes(&self) -> vk::DeviceSize {
         let mut unused_bytes: vk::DeviceSize = 0;
 
@@ -583,6 +591,7 @@ impl<LT: Lifetime> Allocator<LT> {
     }
 
     /// Number of allocated Vulkan memory blocks.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn block_count(&self) -> usize {
         let mut count: usize = 0;
 
@@ -609,6 +618,7 @@ impl ChunkType {
     /// There is an implementation-dependent limit, bufferImageGranularity, which specifies a
     /// page-like granularity at which linear and non-linear resources must be placed in adjacent
     /// memory locations to avoid aliasing.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn granularity_conflict(self, other: ChunkType) -> bool {
         if self == ChunkType::Free || other == ChunkType::Free {
             return false;
@@ -665,16 +675,19 @@ unsafe impl<LT: Lifetime> Sync for Allocation<LT> {}
 
 impl<LT: Lifetime> Allocation<LT> {
     /// The `DeviceMemory` of the allocation. Managed by the allocator.
+    #[inline]
     pub fn device_memory(&self) -> vk::DeviceMemory {
         self.device_memory
     }
 
     /// The offset inside the `DeviceMemory`.
+    #[inline]
     pub fn offset(&self) -> vk::DeviceSize {
         self.offset
     }
 
     /// The size of the allocation.
+    #[inline]
     pub fn size(&self) -> vk::DeviceSize {
         self.size
     }
@@ -684,6 +697,7 @@ impl<LT: Lifetime> Allocation<LT> {
     ///
     /// # Safety
     /// Caller needs to make sure that the allocation is still valid and coherent.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub unsafe fn mapped_slice(&self) -> Result<Option<&[u8]>> {
         let slice = if let Some(ptr) = self.mapped_ptr {
             let size = self.size.try_into()?;
@@ -700,6 +714,7 @@ impl<LT: Lifetime> Allocation<LT> {
     ///
     /// # Safety
     /// Caller needs to make sure that the allocation is still valid and coherent.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub unsafe fn mapped_slice_mut(&mut self) -> Result<Option<&mut [u8]>> {
         let slice = if let Some(ptr) = self.mapped_ptr.as_mut() {
             let size = self.size.try_into()?;
@@ -740,6 +755,7 @@ struct MemoryPool {
 }
 
 impl MemoryPool {
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn new(block_size: vk::DeviceSize, memory_type_index: u32, is_mappable: bool) -> Result<Self> {
         let mut blocks = Vec::with_capacity(128);
         let mut chunks = Vec::with_capacity(128);
@@ -778,6 +794,7 @@ impl MemoryPool {
         })
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn add_block(&mut self, block: MemoryBlock) -> NonZeroUsize {
         if let Some(key) = self.free_block_slots.pop() {
             self.blocks[key.get()] = Some(block);
@@ -789,6 +806,7 @@ impl MemoryPool {
         }
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn add_chunk(&mut self, chunk: MemoryChunk) -> NonZeroUsize {
         if let Some(key) = self.free_chunk_slots.pop() {
             self.chunks[key.get()] = Some(chunk);
@@ -800,6 +818,7 @@ impl MemoryPool {
         }
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     unsafe fn allocate_dedicated<LT: Lifetime>(
         &mut self,
         device: &erupt::DeviceLoader,
@@ -825,6 +844,7 @@ impl MemoryPool {
         })
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     unsafe fn allocate<LT: Lifetime>(
         &mut self,
         device: &erupt::DeviceLoader,
@@ -1032,6 +1052,7 @@ impl MemoryPool {
         }
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     unsafe fn allocate_new_block(&mut self, device: &erupt::DeviceLoader) -> Result<()> {
         let block = MemoryBlock::new(
             device,
@@ -1060,6 +1081,7 @@ impl MemoryPool {
         Ok(())
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn free_chunk(&mut self, chunk_key: NonZeroUsize) -> Result<()> {
         let (previous_key, next_key, size) = {
             let chunk = self.chunks[chunk_key.get()]
@@ -1076,6 +1098,7 @@ impl MemoryPool {
         Ok(())
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn merge_free_neighbor(
         &mut self,
         neighbor: Option<NonZeroUsize>,
@@ -1099,6 +1122,7 @@ impl MemoryPool {
         Ok(())
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn merge_rhs_into_lhs_chunk(
         &mut self,
         lhs_chunk_key: NonZeroUsize,
@@ -1157,6 +1181,7 @@ impl MemoryPool {
         Ok(())
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     unsafe fn free_block(
         &mut self,
         device: &erupt::DeviceLoader,
@@ -1173,12 +1198,14 @@ impl MemoryPool {
         Ok(())
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn add_to_free_list(&mut self, chunk_key: NonZeroUsize, size: vk::DeviceSize) -> Result<()> {
         let chunk_bucket_index: usize = calculate_bucket_index(size).try_into()?;
         self.free_chunks[chunk_bucket_index].push(chunk_key);
         Ok(())
     }
 
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn remove_from_free_list(
         &mut self,
         chunk_key: NonZeroUsize,
@@ -1303,6 +1330,7 @@ fn is_on_same_page(offset_a: u64, size_a: u64, offset_b: u64, page_size: u64) ->
     end_page_a == start_page_b
 }
 
+#[cfg_attr(feature = "profiling", profiling::function)]
 unsafe fn query_driver(
     instance: &erupt::InstanceLoader,
     physical_device: vk::PhysicalDevice,
