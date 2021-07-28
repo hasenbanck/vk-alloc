@@ -18,31 +18,32 @@
 //!
 //! impl vk_alloc::Lifetime for Lifetime {}
 //!
-//! Allocator::<Lifetime>::new(
-//!     &instance,
-//!     &physical_device,
-//!     &AllocatorDescriptor {
-//!         ..Default::default()
-//!     },
-//! ).unwrap();
-//!
-//! let allocation = alloc
-//!     .allocate(
-//!         &logical_device,
-//!         &AllocationDescriptor {
-//!             location: MemoryLocation::GpuOnly,
-//!             requirements: vk::MemoryRequirementsBuilder::new()
-//!                 .alignment(512)
-//!                 .size(1024)
-//!                 .memory_type_bits(u32::MAX)
-//!                 .build(),
-//!             lifetime: Lifetime::Buffer,
-//!             is_dedicated: false,
-//!             is_optimal: false,
+//! unsafe {
+//!     Allocator::<Lifetime>::new(
+//!         &instance,
+//!         &physical_device,
+//!         &AllocatorDescriptor {
+//!             ..Default::default()
 //!         },
-//!     )
-//!     .unwrap();
+//!     ).unwrap();
 //!
+//!     let allocation = alloc
+//!         .allocate(
+//!             &logical_device,
+//!             &AllocationDescriptor {
+//!                 location: MemoryLocation::GpuOnly,
+//!                 requirements: vk::MemoryRequirementsBuilder::new()
+//!                     .alignment(512)
+//!                     .size(1024)
+//!                     .memory_type_bits(u32::MAX)
+//!                     .build(),
+//!                 lifetime: Lifetime::Buffer,
+//!                 is_dedicated: false,
+//!                 is_optimal: false,
+//!             },
+//!         )
+//!         .unwrap();
+//! }
 //! ```
 //!
 use std::collections::HashMap;
@@ -97,8 +98,11 @@ pub struct Allocator<LT: Lifetime> {
 
 impl<LT: Lifetime> Allocator<LT> {
     /// Creates a new allocator.
+    ///
+    /// # Safety
+    /// Caller needs to make sure that the provided instance and device are in a valid state.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn new(
+    pub unsafe fn new(
         instance: &erupt::InstanceLoader,
         physical_device: vk::PhysicalDevice,
         descriptor: &AllocatorDescriptor,
@@ -109,8 +113,7 @@ impl<LT: Lifetime> Allocator<LT> {
         #[cfg(feature = "tracing")]
         debug!("Driver ID of the physical device: {:?}", driver_id);
 
-        let memory_properties =
-            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+        let memory_properties = instance.get_physical_device_memory_properties(physical_device);
 
         let memory_types_count: usize = (memory_properties.memory_type_count).try_into()?;
         let memory_types = memory_properties.memory_types[..memory_types_count].to_owned();
@@ -132,7 +135,10 @@ impl<LT: Lifetime> Allocator<LT> {
     }
 
     /// Allocates memory for a buffer.
-    pub fn allocate_memory_for_buffer(
+    ///
+    /// # Safety
+    /// Caller needs to make sure that the provided device and buffer are in a valid state.
+    pub unsafe fn allocate_memory_for_buffer(
         &self,
         device: &erupt::DeviceLoader,
         buffer: vk::Buffer,
@@ -145,7 +151,7 @@ impl<LT: Lifetime> Allocator<LT> {
             vk::MemoryRequirements2Builder::new().extend_from(&mut dedicated_requirements);
 
         let requirements =
-            unsafe { device.get_buffer_memory_requirements2(&info, Some(requirements.build())) };
+            device.get_buffer_memory_requirements2(&info, Some(requirements.build()));
 
         let memory_requirements = requirements.memory_requirements;
 
@@ -164,7 +170,10 @@ impl<LT: Lifetime> Allocator<LT> {
     }
 
     /// Allocates memory for an image. `is_optimal` must be set true if the image is a optimal image (a regular texture).
-    pub fn allocate_memory_for_image(
+    ///
+    /// # Safety
+    /// Caller needs to make sure that the provided device and image are in a valid state.
+    pub unsafe fn allocate_memory_for_image(
         &self,
         device: &erupt::DeviceLoader,
         image: vk::Image,
@@ -177,8 +186,7 @@ impl<LT: Lifetime> Allocator<LT> {
         let requirements =
             vk::MemoryRequirements2Builder::new().extend_from(&mut dedicated_requirements);
 
-        let requirements =
-            unsafe { device.get_image_memory_requirements2(&info, Some(requirements.build())) };
+        let requirements = device.get_image_memory_requirements2(&info, Some(requirements.build()));
 
         let memory_requirements = requirements.memory_requirements;
 
@@ -197,8 +205,11 @@ impl<LT: Lifetime> Allocator<LT> {
     }
 
     /// Allocates memory on the allocator.
+    ///
+    /// # Safety
+    /// Caller needs to make sure that the provided device is in a valid state.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn allocate(
+    pub unsafe fn allocate(
         &self,
         device: &erupt::DeviceLoader,
         descriptor: &AllocationDescriptor<LT>,
@@ -368,8 +379,12 @@ impl<LT: Lifetime> Allocator<LT> {
     }
 
     /// Frees the allocation.
+    ///
+    /// # Safety
+    /// Caller needs to make sure that the allocation is not in use anymore and will not be used
+    /// after being deallocated.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn deallocate(
+    pub unsafe fn deallocate(
         &self,
         device: &erupt::DeviceLoader,
         allocation: &Allocation<LT>,
@@ -415,8 +430,12 @@ impl<LT: Lifetime> Allocator<LT> {
     }
 
     /// Releases all memory blocks back to the system. Should be called before drop.
+    ///
+    /// # Safety
+    /// Caller needs to make sure that no allocations are used anymore and will not being used
+    /// after calling this function.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn cleanup(&mut self, device: &erupt::DeviceLoader) {
+    pub unsafe fn cleanup(&mut self, device: &erupt::DeviceLoader) {
         for (_, mut lifetime_pools) in self.pools.write().drain() {
             lifetime_pools.drain(..).for_each(|pool| {
                 pool.lock().blocks.iter_mut().for_each(|block| {
@@ -635,12 +654,9 @@ pub struct Allocation<LT: Lifetime> {
     chunk_key: Option<NonZeroUsize>,
     mapped_ptr: Option<std::ptr::NonNull<c_void>>,
 
-    /// The `DeviceMemory` of the allocation. Managed by the allocator.
-    pub device_memory: vk::DeviceMemory,
-    /// The offset inside the `DeviceMemory`.
-    pub offset: vk::DeviceSize,
-    /// The size of the allocation.
-    pub size: vk::DeviceSize,
+    device_memory: vk::DeviceMemory,
+    offset: vk::DeviceSize,
+    size: vk::DeviceSize,
 }
 
 unsafe impl<LT: Lifetime> Send for Allocation<LT> {}
@@ -648,15 +664,31 @@ unsafe impl<LT: Lifetime> Send for Allocation<LT> {}
 unsafe impl<LT: Lifetime> Sync for Allocation<LT> {}
 
 impl<LT: Lifetime> Allocation<LT> {
+    /// The `DeviceMemory` of the allocation. Managed by the allocator.
+    pub fn device_memory(&self) -> vk::DeviceMemory {
+        self.device_memory
+    }
+
+    /// The offset inside the `DeviceMemory`.
+    pub fn offset(&self) -> vk::DeviceSize {
+        self.offset
+    }
+
+    /// The size of the allocation.
+    pub fn size(&self) -> vk::DeviceSize {
+        self.size
+    }
+
     /// Returns a valid mapped slice if the memory is host visible, otherwise it will return None.
     /// The slice already references the exact memory region of the sub allocation, so no offset needs to be applied.
-    pub fn mapped_slice(&self) -> Result<Option<&[u8]>> {
+    ///
+    /// # Safety
+    /// Caller needs to make sure that the allocation is still valid and coherent.
+    pub unsafe fn mapped_slice(&self) -> Result<Option<&[u8]>> {
         let slice = if let Some(ptr) = self.mapped_ptr {
             let size = self.size.try_into()?;
             #[allow(clippy::as_conversions)]
-            unsafe {
-                Some(std::slice::from_raw_parts(ptr.as_ptr() as *const _, size))
-            }
+            Some(std::slice::from_raw_parts(ptr.as_ptr() as *const _, size))
         } else {
             None
         };
@@ -665,13 +697,14 @@ impl<LT: Lifetime> Allocation<LT> {
 
     /// Returns a valid mapped mutable slice if the memory is host visible, otherwise it will return None.
     /// The slice already references the exact memory region of the sub allocation, so no offset needs to be applied.
-    pub fn mapped_slice_mut(&mut self) -> Result<Option<&mut [u8]>> {
+    ///
+    /// # Safety
+    /// Caller needs to make sure that the allocation is still valid and coherent.
+    pub unsafe fn mapped_slice_mut(&mut self) -> Result<Option<&mut [u8]>> {
         let slice = if let Some(ptr) = self.mapped_ptr.as_mut() {
             let size = self.size.try_into()?;
             #[allow(clippy::as_conversions)]
-            unsafe {
-                Some(std::slice::from_raw_parts_mut(ptr.as_ptr() as *mut _, size))
-            }
+            Some(std::slice::from_raw_parts_mut(ptr.as_ptr() as *mut _, size))
         } else {
             None
         };
@@ -767,7 +800,7 @@ impl MemoryPool {
         }
     }
 
-    fn allocate_dedicated<LT: Lifetime>(
+    unsafe fn allocate_dedicated<LT: Lifetime>(
         &mut self,
         device: &erupt::DeviceLoader,
         size: vk::DeviceSize,
@@ -792,7 +825,7 @@ impl MemoryPool {
         })
     }
 
-    fn allocate<LT: Lifetime>(
+    unsafe fn allocate<LT: Lifetime>(
         &mut self,
         device: &erupt::DeviceLoader,
         buffer_image_granularity: u64,
@@ -959,7 +992,7 @@ impl MemoryPool {
 
                 let mapped_ptr = if !block.mapped_ptr.is_null() {
                     let offset: usize = candidate_chunk.offset.try_into()?;
-                    let offset_ptr = unsafe { block.mapped_ptr.add(offset) };
+                    let offset_ptr = block.mapped_ptr.add(offset);
                     std::ptr::NonNull::new(offset_ptr)
                 } else {
                     None
@@ -999,7 +1032,7 @@ impl MemoryPool {
         }
     }
 
-    fn allocate_new_block(&mut self, device: &erupt::DeviceLoader) -> Result<()> {
+    unsafe fn allocate_new_block(&mut self, device: &erupt::DeviceLoader) -> Result<()> {
         let block = MemoryBlock::new(
             device,
             self.block_size,
@@ -1124,7 +1157,11 @@ impl MemoryPool {
         Ok(())
     }
 
-    fn free_block(&mut self, device: &erupt::DeviceLoader, block_key: NonZeroUsize) -> Result<()> {
+    unsafe fn free_block(
+        &mut self,
+        device: &erupt::DeviceLoader,
+        block_key: NonZeroUsize,
+    ) -> Result<()> {
         let mut block = self.blocks[block_key.get()]
             .take()
             .ok_or(AllocatorError::CantFindBlock)?;
@@ -1183,7 +1220,7 @@ unsafe impl Send for MemoryBlock {}
 
 impl MemoryBlock {
     #[cfg_attr(feature = "profiling", profiling::function)]
-    fn new(
+    unsafe fn new(
         device: &erupt::DeviceLoader,
         size: vk::DeviceSize,
         memory_type_index: u32,
@@ -1202,7 +1239,8 @@ impl MemoryBlock {
             let mut flags_info = vk::MemoryAllocateFlagsInfoBuilder::new().flags(allocation_flags);
             let alloc_info = alloc_info.extend_from(&mut flags_info);
 
-            unsafe { device.allocate_memory(&alloc_info, None) }
+            device
+                .allocate_memory(&alloc_info, None)
                 .map_err(|_| AllocatorError::OutOfMemory)?
         };
 
@@ -1212,20 +1250,19 @@ impl MemoryBlock {
                 .allocation_size(size)
                 .memory_type_index(memory_type_index);
 
-            unsafe { device.allocate_memory(&alloc_info, None) }
+            device
+                .allocate_memory(&alloc_info, None)
                 .map_err(|_| AllocatorError::OutOfMemory)?
         };
 
         let mut mapped_ptr: *mut c_void = ptr::null_mut();
         if is_mappable {
-            unsafe {
-                if device
-                    .map_memory(device_memory, 0, vk::WHOLE_SIZE, None, &mut mapped_ptr)
-                    .is_err()
-                {
-                    device.free_memory(Some(device_memory), None);
-                    return Err(AllocatorError::FailedToMap);
-                }
+            if device
+                .map_memory(device_memory, 0, vk::WHOLE_SIZE, None, &mut mapped_ptr)
+                .is_err()
+            {
+                device.free_memory(Some(device_memory), None);
+                return Err(AllocatorError::FailedToMap);
             }
         }
 
@@ -1238,11 +1275,11 @@ impl MemoryBlock {
     }
 
     #[cfg_attr(feature = "profiling", profiling::function)]
-    fn destroy(&mut self, device: &erupt::DeviceLoader) {
+    unsafe fn destroy(&mut self, device: &erupt::DeviceLoader) {
         if !self.mapped_ptr.is_null() {
-            unsafe { device.unmap_memory(self.device_memory) };
+            device.unmap_memory(self.device_memory);
         }
-        unsafe { device.free_memory(Some(self.device_memory), None) };
+        device.free_memory(Some(self.device_memory), None);
         self.device_memory = vk::DeviceMemory::null()
     }
 }
@@ -1266,7 +1303,7 @@ fn is_on_same_page(offset_a: u64, size_a: u64, offset_b: u64, page_size: u64) ->
     end_page_a == start_page_b
 }
 
-fn query_driver(
+unsafe fn query_driver(
     instance: &erupt::InstanceLoader,
     physical_device: vk::PhysicalDevice,
 ) -> (vk::DriverId, bool, u64) {
@@ -1274,12 +1311,8 @@ fn query_driver(
     let physical_device_properties =
         vk::PhysicalDeviceProperties2Builder::new().extend_from(&mut vulkan_12_properties);
 
-    let physical_device_properties = unsafe {
-        instance.get_physical_device_properties2(
-            physical_device,
-            Some(physical_device_properties.build()),
-        )
-    };
+    let physical_device_properties = instance
+        .get_physical_device_properties2(physical_device, Some(physical_device_properties.build()));
     let is_integrated =
         physical_device_properties.properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU;
 
