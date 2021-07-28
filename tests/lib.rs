@@ -38,7 +38,7 @@ fn allocator_creation() {
 fn allocator_simple_free() {
     unsafe {
         let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-        let mut alloc = Allocator::new(
+        let alloc = Allocator::new(
             &ctx.instance,
             ctx.physical_device,
             &AllocatorDescriptor { block_size: 20 }, // 1 MiB
@@ -80,7 +80,7 @@ fn allocator_simple_free() {
 fn allocator_allocation_1024() {
     unsafe {
         let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-        let mut alloc = Allocator::new(
+        let alloc = Allocator::new(
             &ctx.instance,
             ctx.physical_device,
             &AllocatorDescriptor { block_size: 20 }, // 1 MiB
@@ -141,7 +141,7 @@ fn allocator_allocation_1024() {
 fn allocator_allocation_256() {
     unsafe {
         let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-        let mut alloc = Allocator::new(
+        let alloc = Allocator::new(
             &ctx.instance,
             ctx.physical_device,
             &AllocatorDescriptor { block_size: 20 }, // 1 MiB
@@ -205,7 +205,7 @@ fn allocator_allocation_256() {
 fn allocator_reverse_free() {
     unsafe {
         let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-        let mut alloc = Allocator::new(
+        let alloc = Allocator::new(
             &ctx.instance,
             ctx.physical_device,
             &AllocatorDescriptor { block_size: 20 }, // 1 MiB
@@ -278,7 +278,7 @@ fn allocator_reverse_free() {
 fn allocator_free_every_second_time() {
     unsafe {
         let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-        let mut alloc = Allocator::new(
+        let alloc = Allocator::new(
             &ctx.instance,
             ctx.physical_device,
             &AllocatorDescriptor { block_size: 20 }, // 1 MiB
@@ -342,7 +342,7 @@ fn allocator_free_every_second_time() {
 fn allocator_allocation_dedicated() {
     unsafe {
         let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-        let mut alloc = Allocator::new(
+        let alloc = Allocator::new(
             &ctx.instance,
             ctx.physical_device,
             &AllocatorDescriptor { block_size: 20 }, // 1 MiB
@@ -388,7 +388,7 @@ fn allocator_allocation_dedicated() {
 fn allocator_properly_merge_free_entries() {
     unsafe {
         let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-        let mut alloc = Allocator::new(
+        let alloc = Allocator::new(
             &ctx.instance,
             ctx.physical_device,
             &AllocatorDescriptor { block_size: 20 }, // 1 MiB
@@ -473,7 +473,7 @@ fn allocator_properly_merge_free_entries() {
 fn allocator_fuzzy() {
     unsafe {
         let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-        let mut alloc = Allocator::new(
+        let alloc = Allocator::new(
             &ctx.instance,
             ctx.physical_device,
             &AllocatorDescriptor::default(),
@@ -533,7 +533,7 @@ fn allocator_fuzzy() {
 fn allocator_granularity() {
     unsafe {
         let ctx = fixture::VulkanContext::new(vk::make_api_version(0, 1, 2, 0));
-        let mut alloc = Allocator::new(
+        let alloc = Allocator::new(
             &ctx.instance,
             ctx.physical_device,
             &AllocatorDescriptor { block_size: 20 }, // 1 MiB

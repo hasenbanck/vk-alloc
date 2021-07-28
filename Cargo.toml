@@ -1,6 +1,6 @@
 [package]
 name = "vk-alloc"
-version = "2.0.0"
+version = "2.0.1"
 authors = ["Nils Hasenbanck <nils@hasenbanck.de>"]
 description = "A segregated list memory allocator for Vulkan."
 license = "Zlib OR MIT OR Apache-2.0"

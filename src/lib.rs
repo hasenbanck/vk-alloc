@@ -435,7 +435,7 @@ impl<LT: Lifetime> Allocator<LT> {
     /// Caller needs to make sure that no allocations are used anymore and will not being used
     /// after calling this function.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub unsafe fn cleanup(&mut self, device: &erupt::DeviceLoader) {
+    pub unsafe fn cleanup(&self, device: &erupt::DeviceLoader) {
         for (_, mut lifetime_pools) in self.pools.write().drain() {
             lifetime_pools.drain(..).for_each(|pool| {
                 pool.lock().blocks.iter_mut().for_each(|block| {
