@@ -11,7 +11,7 @@ keywords = ["vk", "vulkan", "erupt", "allocator", "memory"]
 edition = "2018"
 
 [dependencies]
-erupt = "0.19"
+erupt = "0.20"
 parking_lot = "0.11"
 tracing1 = { version = "0.1", package = "tracing", default-features = false, optional = true }
 profiling = { version = "1.0", optional = true }
