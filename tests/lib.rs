@@ -529,6 +529,14 @@ fn allocator_fuzzy() {
     }
 }
 
+fn align_down(val: u64, alignment: u64) -> u64 {
+    val & !(alignment - 1u64)
+}
+
+fn align_up(val: u64, alignment: u64) -> u64 {
+    align_down(val + alignment - 1u64, alignment)
+}
+
 #[test]
 fn allocator_granularity() {
     unsafe {
@@ -560,6 +568,8 @@ fn allocator_granularity() {
         assert_eq!(allocation1.size(), 512);
         assert_eq!(allocation1.offset(), 0);
 
+        let optimal_align = align_up(allocation1.size(), ctx.buffer_image_granularity);
+
         let allocation2 = alloc
             .allocate(
                 &ctx.logical_device,
@@ -578,7 +588,7 @@ fn allocator_granularity() {
             .unwrap();
 
         assert_eq!(allocation2.size(), 1024);
-        assert_eq!(allocation2.offset(), 1024);
+        assert_eq!(allocation2.offset(), optimal_align);
 
         alloc.deallocate(&ctx.logical_device, &allocation2).unwrap();
 
