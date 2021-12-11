@@ -163,7 +163,7 @@ impl VulkanContext {
             .enabled_layer_names(&layers)
             .enabled_extension_names(&extensions);
 
-        unsafe { erupt::InstanceLoader::new(&entry, &create_info, None) }.unwrap()
+        unsafe { erupt::InstanceLoader::new(&entry, &create_info) }.unwrap()
     }
 
     #[cfg(feature = "tracing")]
@@ -250,8 +250,7 @@ impl VulkanContext {
             .queue_create_infos(queue_infos)
             .enabled_extension_names(&device_extensions);
 
-        unsafe { erupt::DeviceLoader::new(instance, physical_device, &device_create_info, None) }
-            .unwrap()
+        unsafe { erupt::DeviceLoader::new(instance, physical_device, &device_create_info) }.unwrap()
     }
 
     fn create_device_extensions(
