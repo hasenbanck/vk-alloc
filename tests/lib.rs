@@ -1,7 +1,5 @@
 use erupt::vk;
-use rand::Rng;
-use rand_xoshiro::rand_core::SeedableRng;
-use rand_xoshiro::Xoshiro256PlusPlus;
+use romu::Rng;
 
 use vk_alloc::{Allocation, AllocationDescriptor, Allocator, AllocatorDescriptor, MemoryLocation};
 
@@ -481,13 +479,13 @@ fn allocator_fuzzy() {
         .unwrap();
 
         let mut allocations: Vec<(u8, Allocation<_>)> = Vec::with_capacity(10_0000);
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0);
+        let rng = Rng::from_seed_with_64bit(42);
 
         for i in 0..10_000 {
-            let is_allocation = rng.gen_bool(0.6);
+            let is_allocation = rng.f32() <= 0.6;
 
             if (is_allocation && !allocations.is_empty()) || allocations.is_empty() {
-                let value: u8 = rng.gen_range(0..=255);
+                let value = rng.u8();
                 let size = (value as usize + 1) * 4;
 
                 let mut allocation = alloc
@@ -512,7 +510,7 @@ fn allocator_fuzzy() {
                 slice.fill(value);
                 allocations.push((value, allocation));
             } else {
-                let select: usize = rng.gen_range(0..allocations.len());
+                let select = rng.mod_usize(allocations.len());
                 let (value, allocation) = allocations.remove(select);
                 let slice = allocation.mapped_slice().unwrap().unwrap();
 

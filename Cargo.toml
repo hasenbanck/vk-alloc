@@ -1,6 +1,6 @@
 [package]
 name = "vk-alloc"
-version = "2.1.0"
+version = "2.2.0"
 authors = ["Nils Hasenbanck <nils@hasenbanck.de>"]
 description = "A segregated list memory allocator for Vulkan."
 license = "Zlib OR MIT OR Apache-2.0"
@@ -26,6 +26,5 @@ profile-with-tracy = ["profiling/profile-with-tracy"]
 vk-buffer-device-address = []
 
 [dev-dependencies]
-rand = "0.8"
-rand_xoshiro = "0.6"
+romu = { version = "0.5", default-features = false }
 tracing-subscriber = { version = "0.2", default-features = false, features = ["ansi", "env-filter", "fmt", "registry"] }
