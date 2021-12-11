@@ -54,7 +54,7 @@ use std::hash::Hash;
 use std::num::NonZeroUsize;
 use std::ptr;
 
-use erupt::{vk, ExtendableFromMut};
+use erupt::{vk, ExtendableFrom};
 use parking_lot::{Mutex, RwLock};
 #[cfg(feature = "tracing")]
 use tracing1::{debug, info};
@@ -152,7 +152,7 @@ impl<LT: Lifetime> Allocator<LT> {
             vk::MemoryRequirements2Builder::new().extend_from(&mut dedicated_requirements);
 
         let requirements =
-            device.get_buffer_memory_requirements2(&info, Some(requirements.build()));
+            device.get_buffer_memory_requirements2(&info, Some(requirements.build_dangling()));
 
         let memory_requirements = requirements.memory_requirements;
 
@@ -188,7 +188,8 @@ impl<LT: Lifetime> Allocator<LT> {
         let requirements =
             vk::MemoryRequirements2Builder::new().extend_from(&mut dedicated_requirements);
 
-        let requirements = device.get_image_memory_requirements2(&info, Some(requirements.build()));
+        let requirements =
+            device.get_image_memory_requirements2(&info, Some(requirements.build_dangling()));
 
         let memory_requirements = requirements.memory_requirements;
 
@@ -1256,8 +1257,6 @@ impl MemoryBlock {
     ) -> Result<Self> {
         #[cfg(feature = "vk-buffer-device-address")]
         let device_memory = {
-            use erupt::ExtendableFromConst;
-
             let alloc_info = vk::MemoryAllocateInfoBuilder::new()
                 .allocation_size(size)
                 .memory_type_index(memory_type_index);
@@ -1282,16 +1281,24 @@ impl MemoryBlock {
                 .map_err(|_| AllocatorError::OutOfMemory)?
         };
 
-        let mut mapped_ptr: *mut c_void = ptr::null_mut();
-        if is_mappable {
-            if device
-                .map_memory(device_memory, 0, vk::WHOLE_SIZE, None, &mut mapped_ptr)
-                .is_err()
-            {
-                device.free_memory(Some(device_memory), None);
-                return Err(AllocatorError::FailedToMap);
+        let mapped_ptr = if is_mappable {
+            let mapped_ptr = device.map_memory(
+                device_memory,
+                0,
+                vk::WHOLE_SIZE,
+                vk::MemoryMapFlags::empty(),
+            );
+
+            match mapped_ptr.ok() {
+                Some(mapped_ptr) => mapped_ptr,
+                None => {
+                    device.free_memory(device_memory, None);
+                    return Err(AllocatorError::FailedToMap);
+                }
             }
-        }
+        } else {
+            ptr::null_mut()
+        };
 
         Ok(Self {
             device_memory,
@@ -1306,7 +1313,7 @@ impl MemoryBlock {
         if !self.mapped_ptr.is_null() {
             device.unmap_memory(self.device_memory);
         }
-        device.free_memory(Some(self.device_memory), None);
+        device.free_memory(self.device_memory, None);
         self.device_memory = vk::DeviceMemory::null()
     }
 }
@@ -1339,8 +1346,10 @@ unsafe fn query_driver(
     let physical_device_properties =
         vk::PhysicalDeviceProperties2Builder::new().extend_from(&mut vulkan_12_properties);
 
-    let physical_device_properties = instance
-        .get_physical_device_properties2(physical_device, Some(physical_device_properties.build()));
+    let physical_device_properties = instance.get_physical_device_properties2(
+        physical_device,
+        Some(physical_device_properties.build_dangling()),
+    );
     let is_integrated =
         physical_device_properties.properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU;
 
