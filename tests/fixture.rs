@@ -41,7 +41,7 @@ impl Drop for VulkanContext {
 
             #[cfg(feature = "tracing")]
             self.instance
-                .destroy_debug_utils_messenger_ext(Some(self.debug_messenger), None);
+                .destroy_debug_utils_messenger_ext(self.debug_messenger, None);
 
             self.instance.destroy_instance(None);
         };
