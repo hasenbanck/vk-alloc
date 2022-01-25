@@ -52,7 +52,7 @@ fn allocator_simple_free() {
                         .alignment(512)
                         .size(1024)
                         .memory_type_bits(u32::MAX)
-                        .build_dangling(),
+                        .build(),
                     lifetime: TestLifetime::Static,
                     is_dedicated: false,
                     is_optimal: false,
@@ -97,7 +97,7 @@ fn allocator_allocation_1024() {
                                 .alignment(512)
                                 .size(1024)
                                 .memory_type_bits(u32::MAX)
-                                .build_dangling(),
+                                .build(),
                             lifetime: TestLifetime::Static,
                             is_dedicated: false,
                             is_optimal: false,
@@ -158,7 +158,7 @@ fn allocator_allocation_256() {
                                 .alignment(1024)
                                 .size(256)
                                 .memory_type_bits(u32::MAX)
-                                .build_dangling(),
+                                .build(),
                             lifetime: TestLifetime::Static,
                             is_dedicated: false,
                             is_optimal: false,
@@ -222,7 +222,7 @@ fn allocator_reverse_free() {
                                 .alignment(1024)
                                 .size(256)
                                 .memory_type_bits(u32::MAX)
-                                .build_dangling(),
+                                .build(),
                             lifetime: TestLifetime::Static,
                             is_dedicated: false,
                             is_optimal: false,
@@ -295,7 +295,7 @@ fn allocator_free_every_second_time() {
                                 .alignment(1024)
                                 .size(1024)
                                 .memory_type_bits(u32::MAX)
-                                .build_dangling(),
+                                .build(),
                             lifetime: TestLifetime::Static,
                             is_dedicated: false,
                             is_optimal: false,
@@ -356,7 +356,7 @@ fn allocator_allocation_dedicated() {
                         .alignment(512)
                         .size(10 * 1024 * 1024) // 10 MiB
                         .memory_type_bits(u32::MAX)
-                        .build_dangling(),
+                        .build(),
                     lifetime: TestLifetime::Static,
                     is_dedicated: false,
                     is_optimal: false,
@@ -402,7 +402,7 @@ fn allocator_properly_merge_free_entries() {
                         .alignment(256)
                         .size(256)
                         .memory_type_bits(u32::MAX)
-                        .build_dangling(),
+                        .build(),
                     lifetime: TestLifetime::Static,
                     is_dedicated: false,
                     is_optimal: false,
@@ -418,7 +418,7 @@ fn allocator_properly_merge_free_entries() {
                         .alignment(256)
                         .size(256)
                         .memory_type_bits(u32::MAX)
-                        .build_dangling(),
+                        .build(),
                     lifetime: TestLifetime::Static,
                     is_dedicated: false,
                     is_optimal: false,
@@ -434,7 +434,7 @@ fn allocator_properly_merge_free_entries() {
                         .alignment(256)
                         .size(256)
                         .memory_type_bits(u32::MAX)
-                        .build_dangling(),
+                        .build(),
                     lifetime: TestLifetime::Static,
                     is_dedicated: false,
                     is_optimal: false,
@@ -450,7 +450,7 @@ fn allocator_properly_merge_free_entries() {
                         .alignment(256)
                         .size(256)
                         .memory_type_bits(u32::MAX)
-                        .build_dangling(),
+                        .build(),
                     lifetime: TestLifetime::Static,
                     is_dedicated: false,
                     is_optimal: false,
@@ -497,7 +497,7 @@ fn allocator_fuzzy() {
                                 .alignment(256)
                                 .size(size as u64)
                                 .memory_type_bits(u32::MAX)
-                                .build_dangling(),
+                                .build(),
                             lifetime: TestLifetime::Static,
                             is_dedicated: false,
                             is_optimal: false,
@@ -555,7 +555,7 @@ fn allocator_granularity() {
                         .alignment(256)
                         .size(512)
                         .memory_type_bits(u32::MAX)
-                        .build_dangling(),
+                        .build(),
                     lifetime: TestLifetime::Static,
                     is_dedicated: false,
                     is_optimal: false,
@@ -577,7 +577,7 @@ fn allocator_granularity() {
                         .alignment(256)
                         .size(1024)
                         .memory_type_bits(u32::MAX)
-                        .build_dangling(),
+                        .build(),
                     lifetime: TestLifetime::Static,
                     is_dedicated: false,
                     is_optimal: true,
@@ -599,7 +599,7 @@ fn allocator_granularity() {
                         .alignment(256)
                         .size(1024)
                         .memory_type_bits(u32::MAX)
-                        .build_dangling(),
+                        .build(),
                     lifetime: TestLifetime::Static,
                     is_dedicated: false,
                     is_optimal: false,
